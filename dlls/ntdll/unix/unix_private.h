@@ -228,6 +228,7 @@ extern unsigned int server_select( const union select_op *select_op, data_size_t
                                    timeout_t abs_timeout, struct context_data *context, struct user_apc *user_apc );
 extern unsigned int server_wait( const union select_op *select_op, data_size_t size, UINT flags,
                                  const LARGE_INTEGER *timeout );
+extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
 extern NTSTATUS wait_internal_server( HANDLE handle, BOOLEAN alertable, const LARGE_INTEGER *timeout );
 extern unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call,
                                               union apc_result *result );
