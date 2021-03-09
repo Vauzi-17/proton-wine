@@ -146,6 +146,7 @@ struct msg_queue
     timeout_t              last_get_msg;    /* time of last get message call */
     int                    keystate_lock;   /* owns an input keystate lock */
     const queue_shm_t     *shared;          /* queue in session shared memory */
+    int                    in_inproc_wait;  /* are we in a client-side wait? */
     struct inproc_sync    *inproc_sync;     /* in-process synchronization object */
     int                    esync_fd;        /* esync file descriptor (signalled on message) */
     int                    esync_in_msgwait; /* our thread is currently waiting on us */
@@ -341,6 +342,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
         queue->hooks           = NULL;
         queue->last_get_msg    = current_time;
         queue->keystate_lock   = 0;
+        queue->in_inproc_wait  = 0;
         queue->inproc_sync     = NULL;
         queue->esync_fd        = -1;
         queue->esync_in_msgwait = 0;
@@ -1318,6 +1320,9 @@ static int is_queue_hung( struct msg_queue *queue )
 
     if (do_esync() && queue->esync_in_msgwait)
         return 0;   /* thread is waiting on queue in absentia -> not hung */
+
+    if (queue->in_inproc_wait)
+        return 0;  /* thread is waiting on queue in absentia -> not hung */
 
     return 1;
 }
@@ -4442,6 +4447,45 @@ DECL_HANDLER(update_rawinput_devices)
             set_rawinput_process( thread->process, 1 );
 
         release_object( desktop );
+    }
+}
+
+DECL_HANDLER(select_inproc_queue)
+{
+    struct msg_queue *queue = current->queue;
+
+    if (queue->in_inproc_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        check_thread_queue_idle( current );
+
+        if (queue->fd)
+            set_fd_events( queue->fd, POLLIN );
+
+        queue->in_inproc_wait = 1;
+    }
+}
+
+DECL_HANDLER(unselect_inproc_queue)
+{
+    struct msg_queue *queue = current->queue;
+
+    if (!queue->in_inproc_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        if (queue->fd)
+            set_fd_events( queue->fd, 0 );
+
+        if (req->signaled)
+            msg_queue_satisfied( &queue->obj, NULL );
+
+        queue->in_inproc_wait = 0;
     }
 }
 
