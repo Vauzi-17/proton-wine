@@ -1024,7 +1024,7 @@ union fd_cache_entry
 C_ASSERT( sizeof(union fd_cache_entry) == sizeof(LONG64) );
 
 #define FD_CACHE_BLOCK_SIZE  (65536 / sizeof(union fd_cache_entry))
-#define FD_CACHE_ENTRIES     128
+#define FD_CACHE_ENTRIES     256
 
 static union fd_cache_entry *fd_cache[FD_CACHE_ENTRIES];
 static union fd_cache_entry fd_cache_initial_block[FD_CACHE_BLOCK_SIZE];

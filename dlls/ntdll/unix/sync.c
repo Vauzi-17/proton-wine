@@ -430,7 +430,7 @@ static void release_inproc_sync_obj( struct inproc_sync_cache_entry *cache )
 
 
 #define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync_cache_entry))
-#define INPROC_SYNC_CACHE_ENTRIES     128
+#define INPROC_SYNC_CACHE_ENTRIES     256
 
 static struct inproc_sync_cache_entry *inproc_sync_cache[INPROC_SYNC_CACHE_ENTRIES];
 static struct inproc_sync_cache_entry inproc_sync_cache_initial_block[INPROC_SYNC_CACHE_BLOCK_SIZE];
