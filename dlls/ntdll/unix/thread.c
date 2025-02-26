@@ -76,6 +76,8 @@
 #include "wine/server.h"
 #include "wine/debug.h"
 #include "unix_private.h"
+#include "fsync.h"
+#include "esync.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(thread);
 WINE_DECLARE_DEBUG_CHANNEL(seh);
@@ -1679,7 +1681,10 @@ NTSTATUS WINAPI NtSuspendThread( HANDLE handle, ULONG *ret_count )
 
     if (ret == STATUS_PENDING && wait_handle)
     {
-        NtWaitForSingleObject( wait_handle, FALSE, NULL );
+        if ((do_fsync() || do_esync())) // this breaks with ntsync
+            NtWaitForSingleObject( wait_handle, FALSE, NULL );
+        else
+            server_wait_for_object( wait_handle, FALSE, NULL );
 
         SERVER_START_REQ( suspend_thread )
         {
@@ -1854,7 +1859,10 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
 
     if (ret == STATUS_PENDING)
     {
-        server_wait_for_object( context_handle, FALSE, NULL );
+        if (!(do_fsync() || do_esync()))
+            server_wait_for_object( context_handle, FALSE, NULL );
+        else
+            NtWaitForSingleObject( context_handle, FALSE, NULL );
 
         SERVER_START_REQ( get_thread_context )
         {

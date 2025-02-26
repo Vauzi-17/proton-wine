@@ -121,6 +121,8 @@
 #include "wine/list.h"
 #include "wine/debug.h"
 #include "unix_private.h"
+#include "fsync.h"
+#include "esync.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(file);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
@@ -7027,7 +7029,10 @@ NTSTATUS WINAPI NtLockFile( HANDLE file, HANDLE event, PIO_APC_ROUTINE apc, void
         }
         if (handle)
         {
-            server_wait_for_object( handle, FALSE, NULL );
+            if (!(do_fsync() || do_esync()))
+                server_wait_for_object( handle, FALSE, NULL );
+            else
+                NtWaitForSingleObject( handle, FALSE, NULL );
             NtClose( handle );
         }
         else  /* Unix lock conflict, sleep a bit and retry */

@@ -891,7 +891,10 @@ unsigned int server_queue_process_apc( HANDLE process, const union apc_call *cal
         }
         else
         {
-            server_wait_for_object( handle, FALSE, NULL );
+            if (!(do_fsync() || do_esync()))
+                server_wait_for_object( handle, FALSE, NULL );
+            else
+                NtWaitForSingleObject( handle, FALSE, NULL );
 
             SERVER_START_REQ( get_apc_result )
             {
