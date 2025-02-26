@@ -70,6 +70,8 @@
 #include "wine/condrv.h"
 #include "wine/server.h"
 #include "wine/debug.h"
+#include "fsync.h"
+#include "esync.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(process);
 
@@ -920,7 +922,10 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
 
     /* wait for the new process info to be ready */
 
-    server_wait_for_object( process_info, FALSE, NULL );
+    if (!(do_fsync() || do_esync()))
+        server_wait_for_object( process_info, FALSE, NULL );
+    else
+        NtWaitForSingleObject( process_info, FALSE, NULL );
     SERVER_START_REQ( get_new_process_info )
     {
         req->info = wine_server_obj_handle( process_info );
