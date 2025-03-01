@@ -245,6 +245,7 @@ extern struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned
 extern void set_inproc_event( struct inproc_sync *obj );
 extern void reset_inproc_event( struct inproc_sync *obj );
 extern void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync );
+extern int do_ntsync(void);
 
 extern struct inproc_sync *no_get_inproc_sync( struct object *obj );
 

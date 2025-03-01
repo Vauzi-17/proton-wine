@@ -231,8 +231,6 @@ int main( int argc, char *argv[] )
 
     sock_init();
     open_master_socket();
-    if (getenv( "WINE_DISABLE_FAST_SYNC" ) && atoi( getenv( "WINE_DISABLE_FAST_SYNC" ) ))
-    {
 
     if (do_fsync())
         fsync_init();
@@ -240,9 +238,8 @@ int main( int argc, char *argv[] )
     if (do_esync())
         esync_init();
 
-    if (!do_fsync() && !do_esync())
+    if (!do_fsync() && !do_esync() && !do_ntsync())
         fprintf( stderr, "wineserver: using server-side synchronization.\n" );
-    }
 
     if (debug_level) fprintf( stderr, "wineserver: starting (pid=%ld)\n", (long) getpid() );
     set_current_time();
