@@ -126,11 +126,30 @@ static enum server_fd_type inproc_sync_get_fd_type( struct fd *fd )
     return FD_TYPE_FILE;
 }
 
+static int get_ntsync_fd(void)
+{
+    int fd = open( "/dev/ntsync", O_CLOEXEC | O_RDONLY );
+    if (fd == -1)
+    {
+        static int once;
+        file_set_error();
+        if (!once++) fprintf( stderr, "Cannot open /dev/ntsync: %s\n", strerror( errno ) );
+        return 0;
+    }
+    return fd;
+}
+
 static struct linux_device *get_linux_device(void)
 {
     struct linux_device *device;
     static int initialized;
     int unix_fd;
+
+    if (!do_ntsync())
+    {
+        set_error( STATUS_NOT_IMPLEMENTED );
+        return NULL;
+    }
 
     if (initialized)
     {
@@ -141,24 +160,7 @@ static struct linux_device *get_linux_device(void)
         return linux_device_object;
     }
 
-    if (getenv( "WINE_DISABLE_FAST_SYNC" ) && atoi( getenv( "WINE_DISABLE_FAST_SYNC" ) ))
-    {
-      static int once;
-        set_error( STATUS_NOT_IMPLEMENTED );
-	if (!once++) fprintf(stderr, "ntsync is explicitly disabled.\n");
-	initialized = 1;
-        return NULL;
-    }
-
-    unix_fd = open( "/dev/ntsync", O_CLOEXEC | O_RDONLY );
-    if (unix_fd == -1)
-    {
-      static int once;
-        file_set_error();
-	if (!once++) fprintf(stderr, "Cannot open /dev/ntsync: %s\n", strerror(errno));
-	initialized = 1;
-        return NULL;
-    }
+    if (!(unix_fd = get_ntsync_fd())) return NULL;
 
     if (!(device = alloc_object( &linux_device_ops )))
     {
@@ -179,6 +181,26 @@ static struct linux_device *get_linux_device(void)
     linux_device_object = device;
     initialized = 1;
     return device;
+}
+
+int do_ntsync(void)
+{
+    static int do_ntsync_cached = -1;
+    if (do_ntsync_cached == -1)
+    {
+        int temp_fd;
+        do_ntsync_cached = 1;
+        if ((getenv( "WINE_DISABLE_FAST_SYNC" ) && atoi( getenv( "WINE_DISABLE_FAST_SYNC" ) )) ||
+            (getenv( "WINENTSYNC" ) && !atoi( getenv( "WINENTSYNC" ) )))
+        {
+            fprintf( stderr, "ntsync is explicitly disabled.\n" );
+            do_ntsync_cached = 0;
+        }
+        /* lightweight permission check, full get_linux_device breaks when done at early startup */
+        else if ((temp_fd = get_ntsync_fd())) close( temp_fd );
+        else do_ntsync_cached = 0;
+    }
+    return do_ntsync_cached;
 }
 
 struct inproc_sync
@@ -400,6 +422,12 @@ void reset_inproc_event( struct inproc_sync *obj )
 
 void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync )
 {
+}
+
+int do_ntsync(void)
+{
+    set_error( STATUS_NOT_IMPLEMENTED );
+    return 0;
 }
 
 #endif

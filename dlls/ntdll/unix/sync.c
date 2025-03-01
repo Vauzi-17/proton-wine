@@ -1144,6 +1144,14 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
     return ret;
 }
 
+NTSTATUS do_ntsync(void)
+{
+    static int do_ntsync_cached = -1;
+    if (do_ntsync_cached == -1)
+        do_ntsync_cached = (get_linux_sync_device() >= 0);
+    return !!do_ntsync_cached;
+}
+
 #else
 
 void close_inproc_sync_obj( HANDLE handle )
@@ -1200,6 +1208,11 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
                                         BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
     return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS do_ntsync(void)
+{
+    return 0;
 }
 
 #endif
