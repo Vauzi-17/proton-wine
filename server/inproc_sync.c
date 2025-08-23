@@ -133,7 +133,7 @@ static int get_ntsync_fd(void)
     {
         static int once;
         file_set_error();
-        if (!once++) fprintf( stderr, "Cannot open /dev/ntsync: %s\n", strerror( errno ) );
+        if (!once++) fprintf( stderr, "Cannot open synchronization device: %s\n", strerror( errno ) );
         return 0;
     }
     return fd;
