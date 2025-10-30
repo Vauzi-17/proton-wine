@@ -442,6 +442,11 @@ static inline unsigned int inproc_sync_handle_to_index( HANDLE handle, unsigned 
     return idx % INPROC_SYNC_CACHE_BLOCK_SIZE;
 }
 
+static BOOL is_pseudo_handle( HANDLE handle )
+{
+    return ((ULONG)(ULONG_PTR)handle >= 0xfffffffa);
+}
+
 
 static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj_handle_t inproc_sync, int fd,
                                                               enum inproc_sync_type type, unsigned int access )
@@ -450,6 +455,9 @@ static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj
     struct inproc_sync_cache_entry *cache;
     sigset_t sigset;
     int refcount;
+
+    /* don't cache pseudo-handles; waiting on them is pointless anyway */
+    if (is_pseudo_handle( handle )) return NULL;
 
     if (entry >= INPROC_SYNC_CACHE_ENTRIES)
     {
