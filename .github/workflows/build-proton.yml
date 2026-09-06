@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         arch: [aarch64]
-        api_level: [28, 35]
+        api_level: [28]
       fail-fast: false
     
     steps:

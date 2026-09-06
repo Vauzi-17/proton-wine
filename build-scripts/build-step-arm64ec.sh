@@ -44,11 +44,11 @@ export CPPFLAGS="-I$deps/include --sysroot=$TOOLCHAIN/../sysroot"
 # -g0 = don't emit debug info (the bulk of the tree size); -O2 = normal release optimisation.
 # Applied to the ELF/unix side via CFLAGS below and to the arm64ec PE side via CROSSCFLAGS.
 # (A post-install llvm-strip pass in --install trims the remaining symbol tables.)
-export C_OPTS="-g0 -O2 -Wno-declaration-after-statement -Wno-implicit-function-declaration -Wno-int-conversion"
+export C_OPTS="-g0 -O2 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES -Wno-declaration-after-statement -Wno-implicit-function-declaration -Wno-int-conversion"
 export CFLAGS=$C_OPTS
 export CXXFLAGS=$C_OPTS
 export CROSSCFLAGS="-g0 -O2"
-export LDFLAGS="-L$deps/lib -Wl,-rpath=$RUNTIME_PATH/lib"
+export LDFLAGS="-L$deps/lib -Wl,-rpath=$RUNTIME_PATH/lib -Wl,-z,max-page-size=16384"
 
 export FREETYPE_CFLAGS="-I$deps/include/freetype2"
 export PULSE_CFLAGS="-I$deps/include/pulse"
@@ -445,6 +445,11 @@ do
       echo "FATAL: ntdll.so missing from the output tree" >&2
       exit 1
     fi
-    echo "Output tree ${tree_mb}MB, ntdll.so present."
+    align=$("$TOOLCHAIN/llvm-readelf" -lW "$OUTPUT_DIR/bin/wineserver" 2>/dev/null | awk '/^  LOAD/{print $NF}' | sort -u)
+    if [ "$align" != "0x4000" ]; then
+      echo "FATAL: wineserver LOAD alignment is '$align', expected 0x4000 (16KB)" >&2
+      exit 1
+    fi
+    echo "Output tree ${tree_mb}MB, ntdll.so present, LOAD alignment 16KB."
   fi
 done
