@@ -1,0 +1,33 @@
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index f11f749..bb73da2 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -83,6 +83,10 @@
+ 
+ #include "fsync.h"
+ 
++#ifdef __ANDROID__
++#include "../../../android/ntsync_android/ntsync_user.h"
++#endif
++
+ WINE_DEFAULT_DEBUG_CHANNEL(server);
+ WINE_DECLARE_DEBUG_CHANNEL(syscall);
+ WINE_DECLARE_DEBUG_CHANNEL(client);
+@@ -1715,6 +1719,17 @@ size_t server_init_process(void)
+                 int shm_fd = wine_server_receive_fd( &handle );
+                 esync_init( shm_fd );
+             }
++#ifdef __ANDROID__
++            /* userspace ntsync: no device fd; attach to the shared region */
++            else if (reply->inproc_device == NTSYNC_ANDROID_USED_BY_SERVER)
++            {
++                if (!ntsync_init( NULL ))
++                {
++                    inproc_device_fd = 0;
++                    ntsync_userspace = 1;
++                }
++            }
++#endif
+             else if (reply->inproc_device)
+             {
+                 inproc_device_fd = wine_server_receive_fd( &handle );

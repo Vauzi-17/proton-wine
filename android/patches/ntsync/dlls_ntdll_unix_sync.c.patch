@@ -1,5 +1,5 @@
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index 2bf677a..00c543b 100644
+index 2bf677a..b01b97a 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
 @@ -61,7 +61,14 @@
@@ -308,34 +308,14 @@ index 2bf677a..00c543b 100644
              sync->access = reply->access;
              sync->type = reply->type;
              sync->closed = 0;
-@@ -909,6 +1103,10 @@ static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *inf
- int get_inproc_alert_fd(void)
- {
-     struct ntdll_thread_data *data = ntdll_get_thread_data();
+@@ -922,6 +1116,10 @@ int get_inproc_alert_fd(void)
+             if (!server_call_unlocked( req ))
+             {
+                 if (do_fsync()) data->alert_fd = fd = reply->sync_shm_idx;
 +#ifdef __ANDROID__
 +                /* userspace ntsync alert event handle; valid in every process */
 +                else if (ntsync_userspace) data->alert_fd = fd = reply->sync_shm_idx;
 +#endif
-     obj_handle_t token;
-     sigset_t sigset;
-     int fd;
-@@ -2427,6 +2625,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
-     if (!signal) return STATUS_INVALID_HANDLE;
- 
-     if ((ret = inproc_signal_and_wait( signal, wait, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
-+    static int fast_yield = -1;
-+
-+    if (fast_yield < 0)
-+    {
-+        const char *e = getenv( "WINE_FAST_YIELD" );
-+        fast_yield = e && atoi( e );
-+    }
-+    if (fast_yield)
-+    {
-+        usleep( 0 );
-+        return STATUS_SUCCESS;
-+    }
-+
-         return ret;
- 
-     if (alertable) flags |= SELECT_ALERTABLE;
+                 else
+                 {
+                     data->alert_fd = fd = wine_server_receive_fd( &token );

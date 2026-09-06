@@ -290,7 +290,9 @@ do
       "ntsync/server_inproc_sync.c.patch"
       "ntsync/server_thread.c.patch"
       "ntsync/server_process.c.patch"
+      "ntsync/dlls_ntdll_unix_unix_private.h.patch"
       "ntsync/dlls_ntdll_unix_sync.c.patch"
+      "ntsync/dlls_ntdll_unix_server.c.patch"
     )
 
     for patch in "${PATCHES[@]}"; do
@@ -310,7 +312,7 @@ do
 
     # The loop above only warns when a patch does not apply, so a conflict would
     # silently ship a build without userspace ntsync. Fail hard instead.
-    for f in server/inproc_sync.c server/thread.c server/process.c dlls/ntdll/unix/sync.c; do
+    for f in server/inproc_sync.c server/thread.c server/process.c dlls/ntdll/unix/sync.c dlls/ntdll/unix/server.c; do
       if ! grep -q "ntsync_userspace" "$f"; then
         echo "FATAL: userspace ntsync patch did not apply to $f" >&2
         exit 1
@@ -386,7 +388,10 @@ do
     rm -rf $OUTPUT_DIR/lib
     rm -rf $OUTPUT_DIR/share
     rm -rf $install_dir
-    make -j$(nproc)
+    if ! make -j$(nproc); then
+      echo "FATAL: build failed" >&2
+      exit 1
+    fi
   fi
 
   if [ "$arg" == "--install" ]
@@ -396,7 +401,10 @@ do
     mkdir -p $OUTPUT_DIR/lib
     mkdir -p $OUTPUT_DIR/share
     mkdir -p $install_dir
-    make install -j$(nproc)
+    if ! make install -j$(nproc); then
+      echo "FATAL: install build failed" >&2
+      exit 1
+    fi
     echo "Copying files..."
     cp -r $install_dir/bin/wine* $OUTPUT_DIR/bin
     cp -r $install_dir/bin/reg* $OUTPUT_DIR/bin
@@ -425,5 +433,18 @@ do
     ln -sf ../lib/wine/aarch64-unix/wine-preloader "$install_dir/bin/wine-preloader"
     echo "Wine loader symlinks:"
     ls -la "$OUTPUT_DIR/bin/wine" "$OUTPUT_DIR/bin/wine-preloader"
+
+    # A complete arm64ec tree is ~700MB before packaging. A truncated build once
+    # produced 1MB here and still shipped, so refuse anything implausibly small.
+    tree_mb=$(du -sm "$OUTPUT_DIR" | cut -f1)
+    if [ "$tree_mb" -lt 300 ]; then
+      echo "FATAL: packaged tree is only ${tree_mb}MB - the build is incomplete" >&2
+      exit 1
+    fi
+    if [ ! -f "$OUTPUT_DIR/lib/wine/aarch64-unix/ntdll.so" ]; then
+      echo "FATAL: ntdll.so missing from the output tree" >&2
+      exit 1
+    fi
+    echo "Output tree ${tree_mb}MB, ntdll.so present."
   fi
 done
