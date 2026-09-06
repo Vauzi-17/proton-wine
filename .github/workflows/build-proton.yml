@@ -294,6 +294,11 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-24.04
+    # A fork starts with read-only GITHUB_TOKEN permissions, so creating a release
+    # 403s unless the job asks for contents: write explicitly. Scoped to this job
+    # only — the build job stays read-only.
+    permissions:
+      contents: write
     # Publish only from a push to the GE branch. A pull_request run builds and
     # uploads artifacts but never cuts a release.
     if: github.event_name == 'push' && github.ref == 'refs/heads/ge11.6-ntsync'
