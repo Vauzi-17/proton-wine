@@ -1,17 +1,21 @@
-# Build Proton Wine for Android (bionic), x86_64 + arm64ec.
+# Build GE-Proton Wine for Android (bionic), arm64ec.
+#
+# Base: GameNative proton_11.0-2 (userspace ntsync, fast-yield, FEX unixlib loader,
+# WINEVMEMMAXSIZE, -g0/strip/zstd). On top of it the GE-Proton11-6 game-fixes tier
+# from The412Banner/proton-wine is applied at build time by build-scripts/apply-ge-patches.sh.
 #
 # Single SDK 28 target with 16KB page size support; no separate SDK 35 build.
 #
 # Parts of this workflow (ccache caching, zstd .wcp packaging, profile.json
 # generation, toolchain/termuxfs setup) are adopted from The412Banner/proton-wine
 # (https://github.com/The412Banner/proton-wine, release build-p11-20260821).
-name: Build Proton Wine (SDK 28, 16KB pages)
+name: Build GE-Proton Wine (arm64ec, SDK 28, 16KB pages)
 
 on:
   push:
-    branches: [ proton_11.0-2 ]
+    branches: [ ge11.6-ntsync ]
   pull_request:
-    branches: [ proton_11.0-2 ]
+    branches: [ ge11.6-ntsync ]
   workflow_dispatch:
 
 jobs:
@@ -19,7 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        arch: [aarch64]
       fail-fast: false
 
     steps:
@@ -35,6 +39,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # GE-Proton11-6 game-fixes tier, applied on top of the GameNative bionic tree.
+      # apply-ge-patches.sh is a HARD error on any failed hunk, so a conflict introduced
+      # by a future upstream rebase surfaces here instead of silently dropping a fix.
+      - name: Apply GE-Proton11-6 game-fixes
+        run: bash build-scripts/apply-ge-patches.sh
 
       - name: Set up build environment
         run: |
@@ -204,9 +214,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "11.0-2-${ARCH_NAME}",
+            "versionName": "GE-11.0-6-${ARCH_NAME}",
             "versionCode": 1,
-            "description": "Proton 11.0-2 ${ARCH_NAME} (bionic) — stock Valve + runtime ntsync (kernel driver, userspace fallback) + fsync + Android fixes. SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
+            "description": "GE-Proton 11.0-6 ${ARCH_NAME} (bionic) — Valve 11.0-2 + runtime ntsync (kernel driver, userspace fallback) + fsync + fast-yield + FEX unixlib loader + WINEVMEMMAXSIZE + Android fixes + GE-Proton11-6 game-fixes (WM_ACTIVATEAPP, assettocorsa, dai_xinput, eac, maplestory, pso2, starcitizen, vgsoh). SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -220,9 +230,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "11.0-2-${ARCH_NAME}",
+            "versionName": "GE-11.0-6-${ARCH_NAME}",
             "versionCode": 0,
-            "description": "Proton 11.0-2 ${ARCH_NAME} (bionic) — stock Valve + runtime ntsync (kernel driver, userspace fallback) + fsync + Android fixes. SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
+            "description": "GE-Proton 11.0-6 ${ARCH_NAME} (bionic) — Valve 11.0-2 + runtime ntsync (kernel driver, userspace fallback) + fsync + fast-yield + FEX unixlib loader + WINEVMEMMAXSIZE + Android fixes + GE-Proton11-6 game-fixes (WM_ACTIVATEAPP, assettocorsa, dai_xinput, eac, maplestory, pso2, starcitizen, vgsoh). SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -250,13 +260,13 @@ jobs:
           # faster than xz. -T0 = all cores, -19 = high ratio (small download).
           cp $GITHUB_WORKSPACE/prefixPack.txz .
           cp $GITHUB_WORKSPACE/profile.json .
-          tar -I 'zstd -T0 -19' -cf proton-11.0-2-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
-          mv proton-11.0-2-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
+          tar -I 'zstd -T0 -19' -cf GE-proton-11.0-6-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
+          mv GE-proton-11.0-6-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
 
           # Create Wine WCP for CMOD & Ludashi - wcp.xz format
           cp $GITHUB_WORKSPACE/profile-wine.json profile.json
-          tar cJf proton-wine-11.0-2-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
-          mv proton-wine-11.0-2-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
+          tar cJf GE-proton-wine-11.0-6-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
+          mv GE-proton-wine-11.0-6-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
 
       - name: Upload build artifacts
         run: |
@@ -271,22 +281,27 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proton-${{ env.ARCH_NAME }}
-          path: proton-11.0-2-${{ env.ARCH_NAME }}.wcp
+          path: GE-proton-11.0-6-${{ env.ARCH_NAME }}.wcp
           retention-days: 30
 
       - name: Upload Wine build artifacts for ${{ matrix.arch }}
         uses: actions/upload-artifact@v4
         with:
           name: proton-wine-${{ env.ARCH_NAME }}
-          path: proton-wine-11.0-2-${{ env.ARCH_NAME }}.wcp.xz
+          path: GE-proton-wine-11.0-6-${{ env.ARCH_NAME }}.wcp.xz
           retention-days: 30
 
   release:
     needs: build
     runs-on: ubuntu-24.04
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/proton_11.0-2') || github.event_name == 'workflow_dispatch'
+    # Publish only from a push to the GE branch. A pull_request run builds and
+    # uploads artifacts but never cuts a release.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ge11.6-ntsync'
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -303,64 +318,30 @@ jobs:
         id: generate_tag
         run: |
           DATE=$(date +%Y%m%d)
-          TAG_NAME="proton-11.0-2-${DATE}"
+          TAG_NAME="GE-proton-11.0-6-${DATE}"
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
           echo "Generated tag: ${TAG_NAME}"
+
+      # Notes live in .github/release-notes/ge-11.0-6-body.md so they can be edited
+      # without touching the workflow. The build-commit SHA is appended at publish time.
+      - name: Assemble release notes
+        run: |
+          cp .github/release-notes/ge-11.0-6-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Dibangun dari commit \`${{ github.sha }}\` pada \`${{ github.ref_name }}\`."
+          } >> release-body.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag_name }}
-          name: Proton Wine 11.0-2 (${{ steps.generate_tag.outputs.tag_name }})
+          name: GE-Proton Wine 11.0-6 arm64ec (${{ steps.generate_tag.outputs.tag_name }})
           files: release/*
           draft: false
-          prerelease: false
-          body: |
-            # Caution: This version is provided for testing purposes only. It may lead to game instability or crashes. Use at your own risk.
-
-            ## Proton Wine Build based on Valve [Wine](https://github.com/ValveSoftware/wine/tree/proton_11.0)
-
-            ### Proton Version: 11.0-2
-
-            Built from commit: ${{ github.sha }}
-
-            ### Architectures
-            - x86_64 (Intel/AMD 64-bit)
-            - arm64ec (ARM64EC)
-
-            Single SDK 28 build with 16KB page size support (works on Android 9+ and Android 15+).
-
-            ### Features
-            - Runtime ntsync backend selection: kernel `/dev/ntsync` when present and usable (probed by wineserver at startup), otherwise experimental userspace ntsync via [ntsync-android](https://github.com/GameNative/ntsync-android) (commit [`7ce6435`](https://github.com/GameNative/ntsync-android/commit/7ce6435e5979b1cb5341aa4b299f31e8937fe121)) — plus fsync and wineserver-side `ntsync_event_set` support; `PROTON_NO_NTSYNC=1` disables ntsync entirely, `PROTON_NO_KERNEL_NTSYNC=1` forces the userspace backend
-            - `WINE_FAST_YIELD` fast-yield hook in `NtYieldExecution`
-            - FEX integration (stats shm, `SkipThreadAttach` detach guard) via bylaws' arm64ec patches
-            - FEX unixlib loader: `MemoryWineLoadUnixLibByName` / wow64 / unload support with `$PREFIX/lib/wine` fallback
-            - `WINEVMEMMAXSIZE` virtual-address cap for FEX environments
-            - Integrated lsteamclient built into Proton (supports GameNative bionic Steam)
-            - Stripped, `-g0 -O2` build: smaller tree, faster install (zstd-packed `.wcp`)
-
-            ### ntsync changes in this build
-            - **`PROTON_NO_KERNEL_NTSYNC=1` forces the userspace backend** — new runtime escape hatch for A/B testing: wineserver skips `/dev/ntsync` even when the kernel driver is present and working, and initializes the userspace ntsync-android shm backend instead. The forced backend is identifiable in logs: `ntsync: PROTON_NO_KERNEL_NTSYNC set, using userspace ntsync.`
-            - Runtime kernel/userspace backend detection (probed `NTSYNC_IOC_CREATE_EVENT`, userspace fallback, no shm region on kernel-ntsync devices) shipped in the previous build and is unchanged.
-            - ntsync-android library is unchanged since the last build ([`7ce6435`](https://github.com/GameNative/ntsync-android/commit/7ce6435e5979b1cb5341aa4b299f31e8937fe121)); `PROTON_NO_NTSYNC=1` still disables both backends.
-
-            ### Android / bionic fixes
-            - Anonymous PE-image mapping for bionic (vc4 devices); `LC_ALL=C.UTF-8` default; shell32 drive-root path fix
-            - Android clipboard bridge (user32/win32u) and Android URL/intent launching in winebrowser
-            - dnsapi libresolv bionic port; nsiproxy interface/route enumeration without netlink; ws2_32 socket tweaks
-            - winepulse audio period fix, MIDI mapper rework, SDL gamepad init fixes
-            - winex11 window/keyboard/mouse/GL/desktop tweaks; explorer desktop sizing; `GetUserNameA` on Android
-
-            ### Credits
-            Compile optimizations (ccache, -g0/strip, zstd packaging) and runtime improvements — `WINE_FAST_YIELD` fast-yield, FEX unixlib loader, `WINEVMEMMAXSIZE` VA cap, vc4 bionic fixes (anonymous PE mappings, `LC_ALL=C.UTF-8`, shell32 drive-root fix), and xrandr/xrender enablement — are adopted from [The412Banner/proton-wine](https://github.com/The412Banner/proton-wine) release [build-p11-20260821](https://github.com/The412Banner/proton-wine/releases/tag/build-p11-20260821) (merged in commit `b08376b`).
-
-            ### WCP Files
-            **Proton Type:**
-            - `proton-11.0-2-x86_64.wcp` - For GameNative
-            - `proton-11.0-2-arm64ec.wcp` - For GameNative
-
-            **Wine Type:**
-            - `proton-wine-11.0-2-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
-            - `proton-wine-11.0-2-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+          prerelease: true
+          body_path: release-body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
