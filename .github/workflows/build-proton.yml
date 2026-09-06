@@ -320,7 +320,9 @@ jobs:
       - name: Generate date-based tag
         id: generate_tag
         run: |
-          echo "tag_name=GE-proton-11.0-5-ntsync-$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+          # run_number keeps the tag unique: a second build on the same day used
+          # to collide with the existing tag and fail the whole release job.
+          echo "tag_name=GE-proton-11.0-5-ntsync-$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Assemble release notes
         run: |
