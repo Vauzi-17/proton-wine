@@ -202,6 +202,11 @@ jobs:
             wget https://github.com/GameNative/bionic-prefix-files/raw/main/prefixPack-arm64ec-11.txz -O $GITHUB_WORKSPACE/prefixPack.txz
           fi
 
+      # versionName MUST stay a plain numeric <major>.<minor>-<patch>-<arch> string:
+      # Winlator parses it to resolve the wine version when creating a container, and a
+      # non-numeric prefix (e.g. "GE-") makes container creation fail with
+      # "unable to create container". The GE identity belongs in description only —
+      # this matches both GameNative's and The412Banner's shipped profiles.
       - name: Generate profile.json files
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
@@ -214,8 +219,8 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "GE-11.0-6-${ARCH_NAME}",
-            "versionCode": 1,
+            "versionName": "11.0-6-${ARCH_NAME}",
+            "versionCode": 4,
             "description": "GE-Proton 11.0-6 ${ARCH_NAME} (bionic) — Valve 11.0-2 + runtime ntsync (kernel driver, userspace fallback) + fsync + fast-yield + FEX unixlib loader + WINEVMEMMAXSIZE + Android fixes + GE-Proton11-6 game-fixes (WM_ACTIVATEAPP, assettocorsa, dai_xinput, eac, maplestory, pso2, starcitizen, vgsoh). SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
@@ -230,8 +235,8 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "GE-11.0-6-${ARCH_NAME}",
-            "versionCode": 0,
+            "versionName": "11.0-6-${ARCH_NAME}",
+            "versionCode": 4,
             "description": "GE-Proton 11.0-6 ${ARCH_NAME} (bionic) — Valve 11.0-2 + runtime ntsync (kernel driver, userspace fallback) + fsync + fast-yield + FEX unixlib loader + WINEVMEMMAXSIZE + Android fixes + GE-Proton11-6 game-fixes (WM_ACTIVATEAPP, assettocorsa, dai_xinput, eac, maplestory, pso2, starcitizen, vgsoh). SDK 28 + 16KB pages. Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
