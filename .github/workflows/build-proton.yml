@@ -1,10 +1,10 @@
-name: Build Proton Wine (GE 11.5)
+name: Build GE-Proton Wine 11.5 + userspace ntsync (arm64ec)
 
 on:
   push:
-    branches: [ main, master, proton_11.0, proton_11.5-GE , 'aio-eanet/**' ]
+    branches: [ ge11.5-ntsync ]
   pull_request:
-    branches: [ main, master, proton_11.0 ]
+    branches: [ ge11.5-ntsync ]
   workflow_dispatch:
 
 jobs:
@@ -107,6 +107,18 @@ jobs:
           path: wine-tools
           key: wine-tools-${{ hashFiles('configure.ac', 'configure') }}
 
+      # userspace ntsync: the Rust library GameNative links into ntdll/wineserver.
+      - name: Check out ntsync-android (userspace ntsync)
+        uses: actions/checkout@v4
+        with:
+          repository: GameNative/ntsync-android
+          path: ntsync-android
+
+      - name: Set up Rust for ntsync-android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
       - name: Install ccache
         run: sudo apt-get update && sudo apt-get install -y ccache
 
@@ -135,6 +147,12 @@ jobs:
             bash build-scripts/build-step-arm64ec.sh --build-sysvshm
           fi
       
+      - name: Build ntsync-android library for ${{ matrix.arch }}
+        env:
+          NTSYNC_ANDROID_DIR: ${{ github.workspace }}/ntsync-android
+        run: |
+          bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
+
       - name: Configure build for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
           PAGES_FLAG=""
@@ -189,9 +207,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "11.0-5-${ARCH_NAME}",
-            "versionCode": 3,
-            "description": "Proton 11.0-5 ${ARCH_NAME} (bionic) — Valve + fast-yield gate + FEX-unixlib loader + xrandr/xrender + GE-Proton11-5 game-fixes (battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP) + DirectAudio v1.3.1 + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "versionName": "11.0-9-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "GE-Proton 11.0-5 + userspace ntsync ${ARCH_NAME} (bionic) — The412Banner GE-Proton11-5 base (fast-yield gate, FEX-unixlib loader, xrandr/xrender, DirectAudio v1.3.1, GE game-fixes: battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, Android fixes) + GameNative userspace ntsync (ntsync-android shm+futex, runtime kernel/userspace selection; PROTON_NO_NTSYNC=1 disables, PROTON_NO_KERNEL_NTSYNC=1 forces userspace). Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -205,9 +223,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "11.0-1-${ARCH_NAME}",
-            "versionCode": 0,
-            "description": "Proton 11.0-1 ${ARCH_NAME} (bionic) — stock Valve + fast-yield gate + FEX-unixlib loader. Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "versionName": "11.0-9-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "GE-Proton 11.0-5 + userspace ntsync ${ARCH_NAME} (bionic) — The412Banner GE-Proton11-5 base (fast-yield gate, FEX-unixlib loader, xrandr/xrender, DirectAudio v1.3.1, GE game-fixes: battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, Android fixes) + GameNative userspace ntsync (ntsync-android shm+futex, runtime kernel/userspace selection; PROTON_NO_NTSYNC=1 disables, PROTON_NO_KERNEL_NTSYNC=1 forces userspace). Needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -234,13 +252,13 @@ jobs:
           # far faster than xz. -T0 = all cores, -19 = high ratio (small download).
           cp $GITHUB_WORKSPACE/prefixPack.txz .
           cp $GITHUB_WORKSPACE/profile.json .
-          tar -I 'zstd -T0 -19' -cf GE-proton-11.0-5-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
-          mv GE-proton-11.0-5-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
+          tar -I 'zstd -T0 -19' -cf GE-proton-11.0-5-ntsync-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
+          mv GE-proton-11.0-5-ntsync-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
           
           # Create Wine WCP for CMOD & Ludashi - wcp.xz format
           cp $GITHUB_WORKSPACE/profile-wine.json profile.json
-          tar cJf proton-wine-11.0-1-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
-          mv proton-wine-11.0-1-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
+          tar cJf GE-proton-wine-11.0-5-ntsync-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
+          mv GE-proton-wine-11.0-5-ntsync-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
       
       - name: Upload build artifacts
         run: |
@@ -255,72 +273,73 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proton-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: GE-proton-11.0-5-${{ env.ARCH_NAME }}.wcp
+          path: GE-proton-11.0-5-ntsync-${{ env.ARCH_NAME }}.wcp
           retention-days: 30
       
       - name: Upload Wine build artifacts for ${{ matrix.arch }}
         uses: actions/upload-artifact@v4
         with:
           name: proton-wine-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: proton-wine-11.0-1-${{ env.ARCH_NAME }}.wcp.xz
+          path: GE-proton-wine-11.0-5-ntsync-${{ env.ARCH_NAME }}.wcp.xz
           retention-days: 30
   
   release:
     needs: build
     runs-on: ubuntu-24.04
-    # Disabled: releases are cut only via publish-p11-consolidated.yml. A push
-    # no longer auto-publishes a per-sdk release. Artifacts are still uploaded.
-    if: false
-    
+    # A fork's GITHUB_TOKEN is read-only by default; creating a release needs this.
+    permissions:
+      contents: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ge11.5-ntsync'
+
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
+
+      # Artifacts of both SDK legs share a filename, so label them by api level
+      # instead of letting one overwrite the other.
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -name "*.wcp" -exec cp {} release/ \;
-          find artifacts -name "*.wcp.xz" -exec cp {} release/ \;
+          for sdk in 28 35; do
+            for f in artifacts/proton-arm64ec-sdk$sdk/*.wcp artifacts/proton-wine-arm64ec-sdk$sdk/*.wcp.xz; do
+              [ -e "$f" ] || continue
+              base=$(basename "$f")
+              case "$base" in
+                *.wcp.xz) cp "$f" "release/${base%.wcp.xz}-sdk$sdk.wcp.xz" ;;
+                *.wcp)    cp "$f" "release/${base%.wcp}-sdk$sdk.wcp" ;;
+              esac
+            done
+          done
           ls -lah release/
-      
+
       - name: Generate date-based tag
         id: generate_tag
         run: |
-          DATE=$(date +%Y%m%d)
-          TAG_NAME="build-p11-${DATE}-sdk28"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "Generated tag: ${TAG_NAME}"
-      
+          echo "tag_name=GE-proton-11.0-5-ntsync-$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: Assemble release notes
+        run: |
+          cp .github/release-notes/ge-11.0-5-ntsync-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Dibangun dari commit \`${{ github.sha }}\` pada \`${{ github.ref_name }}\`."
+          } >> release-body.md
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag_name }}
-          name: Proton Wine 11.0-1 (SDK 28, ${{ steps.generate_tag.outputs.tag_name }})
+          name: GE-Proton 11.0-5 + userspace ntsync arm64ec (${{ steps.generate_tag.outputs.tag_name }})
           files: release/*
           draft: false
-          prerelease: false
-          body: |
-            # Caution: This version is provided for testing purposes only. It may lead to game instability or crashes. Use at your own risk.
-            
-            ## Proton Wine Build based on Valve [Wine](https://github.com/ValveSoftware/wine/tree/proton_11.0)
-            
-            ### Proton Version: 11.0-1
-            
-            Built from commit: ${{ github.sha }}
-            
-            ### Architectures
-            - x86_64 (Intel/AMD 64-bit)
-            - arm64ec (ARM64EC)
-            
-            ### WCP Files
-            **Proton Type:**
-            - `GE-proton-11.0-5-x86_64.wcp` - For GameNative
-            - `GE-proton-11.0-5-arm64ec.wcp` - For GameNative
-            
-            **Wine Type:**
-            - `proton-wine-11.0-1-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
-            - `proton-wine-11.0-1-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+          prerelease: true
+          body_path: release-body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

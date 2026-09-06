@@ -1,0 +1,48 @@
+diff --git a/server/thread.c b/server/thread.c
+index 1938eb7..5ffa166 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -65,6 +65,12 @@
+ #include <sys/eventfd.h>
+ #include "fsync.h"
+ 
++#ifdef __ANDROID__
++#include "../android/ntsync_android/ntsync_user.h"
++/* from inproc_sync.c: 1 when using userspace ntsync instead of /dev/ntsync */
++extern int ntsync_userspace_active(void);
++#endif
++
+ /* thread queues */
+ 
+ struct thread_wait
+@@ -1835,8 +1841,17 @@ DECL_HANDLER(init_first_thread)
+     }
+     else if ((fd = get_inproc_device_fd()) >= 0)
+     {
+-        reply->inproc_device = get_process_id( process ) | 1;
+-        send_client_fd( process, fd, reply->inproc_device );
++#ifdef __ANDROID__
++        /* userspace ntsync needs no device fd; the client attaches to the
++         * shared-memory region itself */
++        if (ntsync_userspace_active())
++            reply->inproc_device = NTSYNC_ANDROID_USED_BY_SERVER;
++        else
++#endif
++        {
++            reply->inproc_device = get_process_id( process ) | 1;
++            send_client_fd( process, fd, reply->inproc_device );
++        }
+     }
+ }
+ 
+@@ -2477,6 +2492,10 @@ DECL_HANDLER(get_inproc_alert_fd)
+     if ((fd = get_inproc_sync_fd( current->alert_sync )) < 0) set_error( STATUS_INVALID_PARAMETER );
+     else if (do_fsync()) reply->sync_shm_idx = fd;
+     else
++#ifdef __ANDROID__
++    /* userspace ntsync alert event handle; valid in every process */
++    else if (ntsync_userspace_active()) reply->sync_shm_idx = fd;
++#endif
+     {
+         reply->handle = get_thread_id( current ) | 1; /* arbitrary token */
+         send_client_fd( current->process, fd, reply->handle );

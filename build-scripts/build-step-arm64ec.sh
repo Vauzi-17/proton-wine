@@ -76,6 +76,31 @@ do
     echo "16KB page size support enabled"
   fi
 
+  if [ "$arg" == "--build-ntsync-android" ];
+  then
+    # Build libntsync_android.a (userspace ntsync) from the sibling project.
+    # Static archive: ntdll/wineserver link it in, no runtime .so needed.
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    NTSYNC_DIR="${NTSYNC_ANDROID_DIR:-$PROJECT_ROOT/../ntsync-android}"
+
+    if [ ! -d "$NTSYNC_DIR" ]; then
+        echo "FATAL: ntsync-android project not found at $NTSYNC_DIR" >&2
+        exit 1
+    fi
+    echo "Building ntsync-android library..."
+    if ! "$NTSYNC_DIR/build-scripts/build-android.sh" --build; then
+        echo "FATAL: ntsync-android build failed" >&2
+        exit 1
+    fi
+    mkdir -p "$deps/lib"
+    cp "$NTSYNC_DIR/target/aarch64-linux-android/release/libntsync_android.a" "$deps/lib/"
+    rm -f "$deps/lib/libntsync_android.so"
+    echo "Copied libntsync_android.a (arm64-v8a) to $deps/lib/"
+    # make does not track the archive as a dependency; force a relink.
+    rm -f "$PROJECT_ROOT/dlls/ntdll/ntdll.so" "$PROJECT_ROOT/server/wineserver" "$PROJECT_ROOT/server/wineserver64" 2>/dev/null
+  fi
+
   if [ "$arg" == "--build-sysvshm" ];
   then
     # Build android_sysvshm library
@@ -256,6 +281,16 @@ do
 	  "dlls_ntdll_unix_esync.h.patch"
 	  "server_esync.c.patch"
 	  "server_esync.h.patch"
+
+      # userspace ntsync (GameNative) — must come last: these are regenerated
+      # against the tree *after* every patch above, in particular the esync
+      # changes to server/inproc_sync.c they have to interleave with.
+      "ntsync/dlls_ntdll_Makefile.in.patch"
+      "ntsync/server_Makefile.in.patch"
+      "ntsync/server_inproc_sync.c.patch"
+      "ntsync/server_thread.c.patch"
+      "ntsync/server_process.c.patch"
+      "ntsync/dlls_ntdll_unix_sync.c.patch"
     )
 
     for patch in "${PATCHES[@]}"; do
@@ -272,6 +307,16 @@ do
         echo "SKIPPED: $patch does not apply cleanly"
       fi
     done
+
+    # The loop above only warns when a patch does not apply, so a conflict would
+    # silently ship a build without userspace ntsync. Fail hard instead.
+    for f in server/inproc_sync.c server/thread.c server/process.c dlls/ntdll/unix/sync.c; do
+      if ! grep -q "ntsync_userspace" "$f"; then
+        echo "FATAL: userspace ntsync patch did not apply to $f" >&2
+        exit 1
+      fi
+    done
+    echo "userspace ntsync: patches verified present"
 
     echo "----------------------------------------"
     echo "Done applying patches."
