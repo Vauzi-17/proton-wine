@@ -209,7 +209,7 @@ jobs:
             "type": "Proton",
             "versionName": "11.0-9-${ARCH_NAME}",
             "versionCode": 1,
-            "description": "GE-Proton 11.0-5 + userspace ntsync ${ARCH_NAME} (bionic) — The412Banner GE-Proton11-5 base (fast-yield gate, FEX-unixlib loader, xrandr/xrender, DirectAudio v1.3.1, GE game-fixes: battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, Android fixes) + GameNative userspace ntsync (ntsync-android shm+futex, runtime kernel/userspace selection; PROTON_NO_NTSYNC=1 disables, PROTON_NO_KERNEL_NTSYNC=1 forces userspace). Needs a fresh arm64ec container.",
+            "description": "GE-Proton 11.0-5 arm64ec (bionic) + userspace ntsync. Butuh container arm64ec baru.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -225,7 +225,7 @@ jobs:
             "type": "Wine",
             "versionName": "11.0-9-${ARCH_NAME}",
             "versionCode": 1,
-            "description": "GE-Proton 11.0-5 + userspace ntsync ${ARCH_NAME} (bionic) — The412Banner GE-Proton11-5 base (fast-yield gate, FEX-unixlib loader, xrandr/xrender, DirectAudio v1.3.1, GE game-fixes: battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, Android fixes) + GameNative userspace ntsync (ntsync-android shm+futex, runtime kernel/userspace selection; PROTON_NO_NTSYNC=1 disables, PROTON_NO_KERNEL_NTSYNC=1 forces userspace). Needs a fresh arm64ec container.",
+            "description": "GE-Proton 11.0-5 arm64ec (bionic) + userspace ntsync. Butuh container arm64ec baru.",
             "files": [],
             "wine": {
               "binPath": "bin",

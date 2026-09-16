@@ -185,7 +185,7 @@ index 497e9a9..5282199 100644
      list_remove( &sync->entry );
      if (do_fsync()) fsync_free_shm_idx( sync->fd );
 +#ifdef __ANDROID__
-+    else if (ntsync_userspace) ntsync_close( sync->fd );
++    else if (ntsync_userspace && !do_esync()) ntsync_close( sync->fd );
 +#endif
      else            close( sync->fd );
  }
