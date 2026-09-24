@@ -81,6 +81,27 @@ do
     echo "16KB page size support enabled"
   fi
 
+  if [ "$arg" == "--build-ntsync-android" ];
+  then
+    # Userspace ntsync (https://github.com/GameNative/ntsync-android): a Rust
+    # static archive linked into ntdll.so and wineserver, so no runtime .so is
+    # needed. configure picks it up from $deps/lib (HAVE_NTSYNC_ANDROID).
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    NTSYNC_DIR="${NTSYNC_ANDROID_DIR:-$PROJECT_ROOT/../ntsync-android}"
+
+    if [ ! -d "$NTSYNC_DIR" ]; then
+      echo "FATAL: ntsync-android project not found at $NTSYNC_DIR"; exit 1
+    fi
+    echo "Building ntsync-android library..."
+    "$NTSYNC_DIR/build-scripts/build-android.sh" --build || exit $?
+    mkdir -p "$deps/lib"
+    cp "$NTSYNC_DIR/target/aarch64-linux-android/release/libntsync_android.a" "$deps/lib/"
+    # never let the linker pick a shared copy that is not shipped in the wcp
+    rm -f "$deps/lib/libntsync_android.so"
+    echo "Copied libntsync_android.a (arm64-v8a) to $deps/lib/"
+  fi
+
   if [ "$arg" == "--build-sysvshm" ];
   then
     # Build android_sysvshm library
@@ -166,6 +187,16 @@ do
       --with-xshm \
       --without-xxf86vm \
       || exit $?
+
+    # configure only defines HAVE_NTSYNC_ANDROID when it can link against
+    # libntsync_android; without it the build would silently ship with the
+    # kernel-only ntsync backend, which does nothing on most Android devices.
+    if ! grep -q '^#define HAVE_NTSYNC_ANDROID 1' include/config.h; then
+      echo "FATAL: configure did not detect libntsync_android (userspace ntsync)."
+      grep -n -B2 -A25 'checking for ntsync_init' config.log || true
+      exit 1
+    fi
+    echo "configure: userspace ntsync (libntsync_android) enabled."
 
     echo "Applying patches..."
 
@@ -363,6 +394,21 @@ do
     cp -r $install_dir/bin/notepad $OUTPUT_DIR/bin
     cp -r $install_dir/lib/wine  $OUTPUT_DIR/lib
     cp -r $install_dir/share/wine  $OUTPUT_DIR/share
+
+    # The userspace ntsync backend must be in both halves of the protocol;
+    # look for strings only that code carries (they survive llvm-strip).
+    ntdll_so=$(find "$OUTPUT_DIR/lib/wine" -name ntdll.so | head -n1)
+    wineserver_bin=$(find "$OUTPUT_DIR/bin" -name 'wineserver*' -type f | head -n1)
+    if [ -z "$ntdll_so" ] || [ -z "$wineserver_bin" ]; then
+      echo "FATAL: ntdll.so or wineserver missing from the install tree"; exit 1
+    fi
+    if ! grep -q 'using userspace ntsync' "$wineserver_bin"; then
+      echo "FATAL: $wineserver_bin was built without the userspace ntsync backend"; exit 1
+    fi
+    if ! grep -q 'wineserver uses userspace ntsync, but this process cannot attach' "$ntdll_so"; then
+      echo "FATAL: $ntdll_so was built without the userspace ntsync backend"; exit 1
+    fi
+    echo "Verified userspace ntsync in $wineserver_bin and $ntdll_so."
 
     # Strip the packaged binaries to shrink the tree. llvm-strip ($STRIP) is arm64ec/COFF-aware AND
     # handles ELF, so it strips both the PE DLLs/EXEs and the unix .so loaders. --strip-all keeps the

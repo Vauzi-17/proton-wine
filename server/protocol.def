@@ -4222,7 +4222,8 @@ enum inproc_sync_type
 /* Obtain a handle to the ntsync device object */
 @REQ(get_linux_sync_device)
 @REPLY
-    obj_handle_t handle;          /* handle to the device */
+    obj_handle_t handle;          /* handle to the device (0 for userspace ntsync) */
+    int          userspace;       /* using userspace ntsync (libntsync_android)? */
 @END
 
 /* Create a new futex-based synchronization object */
@@ -4279,6 +4280,7 @@ enum inproc_sync_type
     obj_handle_t handle;          /* handle to the object */
 @REPLY
     obj_handle_t handle;          /* handle to the fast synchronization object */
+    unsigned int userspace_handle; /* userspace ntsync object, used instead of an fd */
     int          type;            /* object type */
     unsigned int access;          /* handle access rights */
 @END
