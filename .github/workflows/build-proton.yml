@@ -1,11 +1,19 @@
-name: Build Proton Wine (GE 10.34)
+# GE-Proton 10.0-34 (bionic, arm64ec) + ntsync with a userspace backend.
+#
+# Base: The412Banner's GE-Proton 10.0-34 layer (proton_10.34-GE @ af34ea7a).
+# ntsync: Elizabeth Figura's in-process synchronization series as carried by
+# CachyOS/wine-cachyos for Proton 10, plus GameNative's ntsync-android library
+# as a userspace backend for devices without /dev/ntsync.
+name: Build GE-Proton 10.0-34 + userspace ntsync (arm64ec)
 
 on:
   push:
-    branches: [ main, master, proton_10.0, proton_10.34-GE , 'aio-eanet/**' ]
-  pull_request:
-    branches: [ main, master, proton_10.0 ]
+    branches: [ claude/proton-10-ntsync-compile-20dq12 ]
   workflow_dispatch:
+
+env:
+  # GameNative/ntsync-android, pinned so a push there cannot change what we ship.
+  NTSYNC_ANDROID_REF: 7ce6435e5979b1cb5341aa4b299f31e8937fe121
 
 jobs:
   build:
@@ -15,7 +23,7 @@ jobs:
         arch: [aarch64]
         api_level: [28]
       fail-fast: false
-    
+
     steps:
       - name: Free up disk space
         run: |
@@ -24,12 +32,12 @@ jobs:
           sudo rm -rf /usr/local/share/boost
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           df -h
-      
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Set up build environment
         run: |
           sudo dpkg --add-architecture i386
@@ -47,6 +55,8 @@ jobs:
             automake \
             libtool \
             pkg-config \
+            ccache \
+            zstd \
             mingw-w64 \
             gcc-multilib \
             g++-multilib \
@@ -56,46 +66,58 @@ jobs:
             libpng-dev:i386 \
             zlib1g-dev \
             zlib1g-dev:i386
-      
+
       - name: Download and extract termuxfs for ${{ matrix.arch }}
         run: |
           mkdir -p $HOME/termuxfs/${{ matrix.arch }}
           cd $HOME/termuxfs/${{ matrix.arch }}
-          wget https://github.com/GameNative/termux-on-gha/releases/download/build-20260218/termuxfs-${{ matrix.arch }}.tar
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/GameNative/termux-on-gha/releases/download/build-20260218/termuxfs-${{ matrix.arch }}.tar
           tar -xf termuxfs-${{ matrix.arch }}.tar
           ls -la $HOME/termuxfs/${{ matrix.arch }}/
-      
+
       - name: Cache Android NDK
         id: cache-ndk
         uses: actions/cache@v4
         with:
           path: ~/Android/Sdk/ndk/27.3.13750724
           key: android-ndk-r27d
-      
+
       - name: Set up Android NDK
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           mkdir -p $HOME/Android/Sdk/ndk
           cd $HOME/Android/Sdk/ndk
-          wget https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          wget --tries=5 --retry-connrefused --waitretry=10 https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
           unzip -q android-ndk-r27d-linux.zip
           mv android-ndk-r27d 27.3.13750724
-      
+
       - name: Cache LLVM MinGW toolchain
         id: cache-llvm-mingw
         uses: actions/cache@v4
         with:
           path: ~/toolchains/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64
           key: bylaws-llvm-mingw-20250920
-      
+
       - name: Set up LLVM MinGW toolchain
         if: steps.cache-llvm-mingw.outputs.cache-hit != 'true'
         run: |
           mkdir -p $HOME/toolchains
           cd $HOME/toolchains
-          wget https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
           tar -xf llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
-      
+
+      - name: Check out ntsync-android (userspace ntsync)
+        uses: actions/checkout@v4
+        with:
+          repository: GameNative/ntsync-android
+          ref: ${{ env.NTSYNC_ANDROID_REF }}
+          path: ntsync-android
+
+      - name: Set up Rust for ntsync-android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
       - name: Run autogen.sh for ${{ matrix.arch }}
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
@@ -103,56 +125,50 @@ jobs:
           else
             bash autogen.sh --aarch64
           fi
-      
+
       - name: Cache wine-tools
         id: cache-wine-tools
         uses: actions/cache@v4
         with:
           path: wine-tools
-          key: wine-tools-${{ hashFiles('configure.ac', 'configure') }}
+          key: wine-tools-p10-ntsync-${{ hashFiles('configure.ac', 'configure', 'server/protocol.def') }}
 
-      # ccache — caches compiled objects across runs (per-SDK, per-arch, rolling restore-keys). Exact key
-      # (per-commit) = full warm restore on a re-run of the same commit; restore-keys pull the newest prior
-      # cache so an unchanged-source rebuild is near-instant. ccache self-validates staleness.
+      # ccache — caches compiled objects across runs (per-commit key, rolling restore-keys).
+      # ccache validates staleness itself, so restoring an older cache is safe.
       - name: Cache ccache (${{ matrix.arch }})
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-p10-sdk${{ matrix.api_level }}-${{ matrix.arch }}-${{ github.sha }}
+          key: ccache-p10-ntsync-sdk${{ matrix.api_level }}-${{ matrix.arch }}-${{ github.sha }}
           restore-keys: |
+            ccache-p10-ntsync-sdk${{ matrix.api_level }}-${{ matrix.arch }}-
             ccache-p10-sdk${{ matrix.api_level }}-${{ matrix.arch }}-
 
       - name: Build wine-tools (step 0)
         if: steps.cache-wine-tools.outputs.cache-hit != 'true'
         run: |
           bash build-scripts/build-step0.sh
-      
+
       - name: Build sysvshm library for ${{ matrix.arch }}
         if: matrix.arch == 'aarch64'
         run: |
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            bash build-scripts/build-step-x86_64.sh --build-sysvshm
-          else
-            bash build-scripts/build-step-arm64ec.sh --build-sysvshm
-          fi
-      
+          bash build-scripts/build-step-arm64ec.sh --build-sysvshm
+
+      # Must come before configure: configure links against libntsync_android.a
+      # to decide HAVE_NTSYNC_ANDROID, and the build fails without it.
+      - name: Build ntsync-android library for ${{ matrix.arch }}
+        env:
+          NTSYNC_ANDROID_DIR: ${{ github.workspace }}/ntsync-android
+        run: |
+          bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
+
       - name: Configure build for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --configure
-          else
-            bash build-scripts/build-step-arm64ec.sh $PAGES_FLAG --configure
-          fi
-      
+          bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --configure
+
       - name: Build Proton for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --build
-          else
-            bash build-scripts/build-step-arm64ec.sh $PAGES_FLAG --build
-          fi
+          bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --build
 
       - name: ccache stats (${{ matrix.arch }})
         if: always()
@@ -160,36 +176,51 @@ jobs:
 
       - name: Install Proton for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --install
-          else
-            bash build-scripts/build-step-arm64ec.sh $PAGES_FLAG --install
-          fi
-      
+          bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --install
+
+      # The412Banner's published P10 layer is 16 KB-aligned on API 28. wineserver
+      # and ntdll.so now also carry the Rust ntsync archive, so make sure linking
+      # it did not change that (wine-preloader is exempt, as in their CI).
+      - name: Verify 16 KB page alignment
+        run: |
+          READELF=$HOME/Android/Sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+          OUTPUT_DIR="$HOME/compiled-files-aarch64"
+          bad=0
+          for f in "$OUTPUT_DIR/bin/wineserver" "$OUTPUT_DIR/lib/wine/aarch64-unix/ntdll.so"; do
+            [ -f "$f" ] || { echo "missing: $f"; bad=1; continue; }
+            $READELF -lW "$f" | awk '$1 == "LOAD"'
+            if $READELF -lW "$f" | awk '$1 == "LOAD" {print $NF}' | grep -qvx 0x4000; then
+              echo "not 16 KB-aligned: $f"; bad=1
+            fi
+          done
+          [ "$bad" = 0 ] || exit 1
+          echo "wineserver and ntdll.so are 16 KB-aligned."
+
       - name: Download prefixPack.txz for ${{ matrix.arch }}
         run: |
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            wget https://github.com/GameNative/bionic-prefix-files/raw/main/prefixPack-x86_64.txz -O $GITHUB_WORKSPACE/prefixPack.txz
-          else
-            wget https://github.com/GameNative/bionic-prefix-files/raw/main/prefixPack-arm64ec.txz -O $GITHUB_WORKSPACE/prefixPack.txz
-          fi
-      
+          # Pinned to GameNative/bionic-prefix-files @ 6286ac45 and sha256-checked, as in
+          # The412Banner's P10 CI: a push to their main must never change what we ship,
+          # and a truncated download must never be packaged.
+          PIN=6286ac456e4a8376e053ce1ce4f565bd37cc4af4
+          NAME=prefixPack-arm64ec.txz
+          SHA=f9288d264f1def18b9a1a95c4132ddef004937ca265af5d2647e63b218e28d01
+          wget --tries=5 --retry-connrefused --waitretry=10 "https://raw.githubusercontent.com/GameNative/bionic-prefix-files/$PIN/$NAME" -O $GITHUB_WORKSPACE/prefixPack.txz
+          echo "$SHA  $GITHUB_WORKSPACE/prefixPack.txz" | sha256sum -c -
+
       - name: Generate profile.json files
         run: |
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            ARCH_NAME="x86_64"
-          else
-            ARCH_NAME="arm64ec"
-          fi
-          
-          # Generate Proton profile.json
+          ARCH_NAME="arm64ec"
+          # versionName must stay numeric (Winlator parses it). 10.0-9 keeps this
+          # separate from The412Banner's 10.0-34 install, the same way the 11.0-5
+          # ntsync prerelease used 11.0-9.
+          DESC="GE-Proton 10.0-34 ${ARCH_NAME} (bionic) + ntsync with userspace backend (ntsync-android). Needs a fresh arm64ec container."
+
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "10.0-34-${ARCH_NAME}",
-            "versionCode": 5,
-            "description": "GE-Proton 10.0-34 ${ARCH_NAME} (bionic, Wine 10) - Valve Proton 10.0 + fast-yield gate + FEX-unixlib loader + xrandr/xrender + DirectAudio v1.3.2 (Wine-10 port; opt-in: registry Audio=directaudio, pulse/alsa stay default) + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale) + GE-Proton10-34 game-fixes (assettocorsa, dai_xinput, eac, pso2, silence-starcitizen, vgsoh) + extras (battlenet, maplestory-charprev, maplestory-stickykeys, WM_ACTIVATEAPP). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "versionName": "10.0-9-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "${DESC}",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -198,14 +229,13 @@ jobs:
             }
           }
           EOF
-          
-          # Generate Wine profile.json for Ludashi
+
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "10.0-4-${ARCH_NAME}",
-            "versionCode": 0,
-            "description": "Proton 10.0-4 ${ARCH_NAME} - Windows compatibility layer with improved gaming support + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default)",
+            "versionName": "10.0-9-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "${DESC}",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -214,111 +244,96 @@ jobs:
             }
           }
           EOF
-      
+
       - name: Package build artifacts
         run: |
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            OUTPUT_DIR="$HOME/compiled-files-x86_64"
-            ARCH_NAME="x86_64"
-          else
-            OUTPUT_DIR="$HOME/compiled-files-aarch64"
-            ARCH_NAME="arm64ec"
-          fi
-          
+          OUTPUT_DIR="$HOME/compiled-files-aarch64"
+          ARCH_NAME="arm64ec"
           cd $OUTPUT_DIR
-          
-          # Create Proton WCP - zstd (tar.zst) for fast in-app install. The app's ContentsManager
-          # tries XZ then falls back to ZSTD, so a zstd .wcp installs with no app change and decompresses
-          # far faster than xz. -T0 = all cores, -19 = high ratio (small download).
+
+          # Proton WCP: zstd (tar.zst) for fast in-app install. The app tries XZ and
+          # falls back to ZSTD. -T0 = all cores, -19 = small download.
           cp $GITHUB_WORKSPACE/prefixPack.txz .
           cp $GITHUB_WORKSPACE/profile.json .
-          tar -I 'zstd -T0 -19' -cf GE-proton-10.0-34-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
-          mv GE-proton-10.0-34-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
-          
-          # Create Wine WCP for CMOD & Ludashi - wcp.xz format
+          tar -I 'zstd -T0 -19' -cf GE-proton-10.0-34-ntsync-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
+          mv GE-proton-10.0-34-ntsync-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
+
+          # Wine WCP for Winlator CMOD & Ludashi: wcp.xz
           cp $GITHUB_WORKSPACE/profile-wine.json profile.json
-          tar cJf proton-wine-10.0-4-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
-          mv proton-wine-10.0-4-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
-      
-      - name: Upload build artifacts
-        run: |
-          if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            ARCH_NAME="x86_64"
-          else
-            ARCH_NAME="arm64ec"
-          fi
-          echo "ARCH_NAME=$ARCH_NAME" >> $GITHUB_ENV
-      
-      - name: Upload Proton build artifacts for ${{ matrix.arch }}
+          tar cJf GE-proton-wine-10.0-34-ntsync-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
+          mv GE-proton-wine-10.0-34-ntsync-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
+          ls -lah $GITHUB_WORKSPACE/*.wcp $GITHUB_WORKSPACE/*.wcp.xz
+
+      - name: Upload Proton build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: proton-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: GE-proton-10.0-34-${{ env.ARCH_NAME }}.wcp
+          name: proton-arm64ec-sdk${{ matrix.api_level }}
+          path: GE-proton-10.0-34-ntsync-arm64ec.wcp
           retention-days: 30
-      
-      - name: Upload Wine build artifacts for ${{ matrix.arch }}
+
+      - name: Upload Wine build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: proton-wine-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: proton-wine-10.0-4-${{ env.ARCH_NAME }}.wcp.xz
+          name: proton-wine-arm64ec-sdk${{ matrix.api_level }}
+          path: GE-proton-wine-10.0-34-ntsync-arm64ec.wcp.xz
           retention-days: 30
-  
+
   release:
     needs: build
     runs-on: ubuntu-24.04
-    # Hard-disabled: a push to proton_10.0 must NOT auto-cut a per-sdk release (wrong tag/body). Releases
-    # are produced only by an explicit `gh release create`. Build artifacts are still uploaded as before.
-    if: false
+    # A fork's GITHUB_TOKEN is read-only by default; creating a release needs this.
+    permissions:
+      contents: write
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
+
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -name "*.wcp" -exec cp {} release/ \;
-          find artifacts -name "*.wcp.xz" -exec cp {} release/ \;
+          for f in artifacts/proton-arm64ec-sdk28/*.wcp artifacts/proton-wine-arm64ec-sdk28/*.wcp.xz; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f")
+            case "$base" in
+              *.wcp.xz) cp "$f" "release/${base%.wcp.xz}-sdk28.wcp.xz" ;;
+              *.wcp)    cp "$f" "release/${base%.wcp}-sdk28.wcp" ;;
+            esac
+          done
           ls -lah release/
-      
+          [ "$(ls release | wc -l)" = 2 ] || { echo "expected 2 release files"; exit 1; }
+
       - name: Generate date-based tag
         id: generate_tag
         run: |
-          DATE=$(date +%Y%m%d)
-          TAG_NAME="build-p10-${DATE}-sdk28"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "Generated tag: ${TAG_NAME}"
-      
+          # run_number keeps the tag unique across several builds on one day.
+          echo "tag_name=GE-proton-10.0-34-ntsync-$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Assemble release notes
+        run: |
+          cp .github/release-notes/ge-10.0-34-ntsync-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built from commit \`${{ github.sha }}\` on \`${{ github.ref_name }}\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+          } >> release-body.md
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag_name }}
-          name: Proton Wine 10.0-4 (SDK 28, ${{ steps.generate_tag.outputs.tag_name }})
+          target_commitish: ${{ github.sha }}
+          name: GE-Proton 10.0-34 + userspace ntsync arm64ec (${{ steps.generate_tag.outputs.tag_name }})
           files: release/*
           draft: false
-          prerelease: false
-          body: |
-            # Caution: This version is provided for testing purposes only. It may lead to game instability or crashes. Use at your own risk.
-            
-            ## Proton Wine Build based on Valve [Wine](https://github.com/ValveSoftware/wine/tree/proton_10.0)
-            
-            ### Proton Version: 10.0-4
-            
-            Built from commit: ${{ github.sha }}
-            
-            ### Architectures
-            - x86_64 (Intel/AMD 64-bit)
-            - arm64ec (ARM64EC)
-            
-            ### WCP Files
-            **Proton Type:**
-            - `proton-10.0-4-x86_64.wcp` - For GameNative
-            - `proton-10.0-4-arm64ec.wcp` - For GameNative
-            
-            **Wine Type:**
-            - `proton-wine-10.0-4-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
-            - `proton-wine-10.0-4-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+          prerelease: true
+          body_path: release-body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
