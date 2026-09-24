@@ -190,7 +190,9 @@ static struct linux_device *get_linux_device(void)
         }
         device->fd = NULL;
         fprintf( stderr, "wine: using fast synchronization (userspace ntsync).\n" );
-        linux_device_object = device;
+        /* clients get no handle to this device, so the cached pointer must
+         * hold its own reference or the first release destroys it */
+        linux_device_object = (struct linux_device *)grab_object( device );
         initialized = 1;
         return device;
     }
@@ -213,7 +215,12 @@ static struct linux_device *get_linux_device(void)
     }
 
     fprintf( stderr, "wine: using fast synchronization.\n" );
-    linux_device_object = device;
+    /* Keep a reference for the cached pointer. Client handles used to be the
+     * only thing keeping the device alive, and once "initialized" is set a
+     * destroyed device is never recreated: ntsync silently stopped working
+     * as soon as every client had exited (e.g. with a persistent wineserver),
+     * or if an object was created before any client asked for the device. */
+    linux_device_object = (struct linux_device *)grab_object( device );
     initialized = 1;
     return device;
 }
