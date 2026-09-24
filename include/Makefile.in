@@ -600,6 +600,7 @@ SOURCES = \
 	ntsecpkg.h \
 	ntstatus.h \
 	ntsync.h \
+	ntsync_android.h \
 	ntuser.h \
 	oaidl.idl \
 	objbase.h \

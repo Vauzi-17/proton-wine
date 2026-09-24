@@ -63,6 +63,9 @@
 #ifdef HAVE_LINUX_TYPES_H
 # include "ntsync.h"
 #endif
+#ifdef HAVE_NTSYNC_ANDROID
+# include "ntsync_android.h"
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -312,23 +315,73 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
 
 #ifdef HAVE_LINUX_NTSYNC_H
 
+/* Set when wineserver uses the userspace ntsync backend. Objects are then
+ * handles into a shared memory region instead of fds: they take the place of
+ * the fd in the cache, go through ntsync_ioctl(), and are never closed here
+ * (wineserver owns them). */
+static BOOL ntsync_userspace;
+
+/* stands in for the device fd, which the userspace backend doesn't have */
+#define NTSYNC_USERSPACE_DEVICE 0x7fffffff
+
+static inline int ntsync_ioctl( int obj, unsigned long request, void *arg )
+{
+#ifdef HAVE_NTSYNC_ANDROID
+    if (ntsync_userspace) return ntsync_userspace_ioctl( obj, request, arg );
+#endif
+    return ioctl( obj, request, arg );
+}
+
+static void ntsync_close_obj( int obj )
+{
+    if (!ntsync_userspace) close( obj );
+}
+
 static int get_linux_sync_device(void)
 {
     static LONG device = -2;
 
-    if (device == -2)
+    /* acquire pairs with the CAS below, so ntsync_userspace is visible too */
+    if (__atomic_load_n( &device, __ATOMIC_ACQUIRE ) == -2)
     {
         HANDLE handle;
-        int fd, needs_close;
+        int fd, needs_close, userspace = 0;
         NTSTATUS ret;
 
         SERVER_START_REQ( get_linux_sync_device )
         {
-            if (!(ret = wine_server_call( req ))) handle = wine_server_ptr_handle( reply->handle );
+            if (!(ret = wine_server_call( req )))
+            {
+                handle = wine_server_ptr_handle( reply->handle );
+                userspace = reply->userspace;
+            }
         }
         SERVER_END_REQ;
 
-        if (!ret)
+        if (!ret && userspace)
+        {
+#ifdef HAVE_NTSYNC_ANDROID
+            int err;
+
+            /* Must be the same region wineserver uses; it is found through
+             * $NTSYNC_SHM or $TMPDIR, so the environment has to match. */
+            if (!(err = ntsync_init( NULL )))
+            {
+                ntsync_userspace = TRUE;
+                InterlockedCompareExchange( &device, NTSYNC_USERSPACE_DEVICE, -2 );
+            }
+            else
+            {
+                ERR( "wineserver uses userspace ntsync, but this process cannot attach to its "
+                     "shared region (error %d); check that TMPDIR / NTSYNC_SHM match.\n", -err );
+                InterlockedCompareExchange( &device, -1, -2 );
+            }
+#else
+            ERR( "wineserver uses userspace ntsync, which this ntdll was built without\n" );
+            InterlockedCompareExchange( &device, -1, -2 );
+#endif
+        }
+        else if (!ret)
         {
             if (!server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))
             {
@@ -424,7 +477,7 @@ static void release_inproc_sync_obj( struct inproc_sync_cache_entry *cache )
         SERVER_END_REQ;
 
         assert( !ret );
-        close( fd );
+        ntsync_close_obj( fd );
     }
 }
 
@@ -574,7 +627,7 @@ static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desire
     struct inproc_sync_cache_entry *cache;
     obj_handle_t inproc_sync_handle;
     enum inproc_sync_type type;
-    unsigned int access;
+    unsigned int access, userspace_handle = 0;
     int fd, needs_close;
     NTSTATUS ret;
 
@@ -585,6 +638,9 @@ static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desire
         return STATUS_SUCCESS;
     }
 
+    /* find out which backend the server uses before interpreting its reply */
+    if (get_linux_sync_device() < 0) return STATUS_NOT_IMPLEMENTED;
+
     /* try to retrieve it from the server */
     SERVER_START_REQ( get_linux_sync_obj )
     {
@@ -592,6 +648,7 @@ static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desire
         if (!(ret = wine_server_call( req )))
         {
             inproc_sync_handle = reply->handle;
+            userspace_handle = reply->userspace_handle;
             access = reply->access;
             type = reply->type;
         }
@@ -600,8 +657,10 @@ static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desire
 
     if (ret) return ret;
 
-    if ((ret = server_get_unix_fd( wine_server_ptr_handle( inproc_sync_handle ),
-                                   0, &fd, &needs_close, NULL, NULL )))
+    if (ntsync_userspace)
+        fd = userspace_handle;
+    else if ((ret = server_get_unix_fd( wine_server_ptr_handle( inproc_sync_handle ),
+                                        0, &fd, &needs_close, NULL, NULL )))
         return ret;
 
     cache = cache_inproc_sync_obj( handle, inproc_sync_handle, fd, type, access );
@@ -653,7 +712,7 @@ static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_c
 {
     NTSTATUS ret;
 
-    ret = ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count );
     if (ret < 0)
     {
         if (errno == EOVERFLOW)
@@ -687,7 +746,7 @@ static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION 
     struct ntsync_sem_args args = {0};
     NTSTATUS ret;
 
-    ret = ioctl( obj, NTSYNC_IOC_SEM_READ, &args );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_SEM_READ, &args );
     if (ret < 0)
         return errno_to_status( errno );
     info->CurrentCount = args.count;
@@ -717,7 +776,7 @@ static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
     NTSTATUS ret;
     __u32 prev;
 
-    ret = ioctl( obj, NTSYNC_IOC_EVENT_SET, &prev );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_EVENT_SET, &prev );
     if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
@@ -746,7 +805,7 @@ static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
     NTSTATUS ret;
     __u32 prev;
 
-    ret = ioctl( obj, NTSYNC_IOC_EVENT_RESET, &prev );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_EVENT_RESET, &prev );
     if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
@@ -775,7 +834,7 @@ static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
     NTSTATUS ret;
     __u32 prev;
 
-    ret = ioctl( obj, NTSYNC_IOC_EVENT_PULSE, &prev );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_EVENT_PULSE, &prev );
     if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
@@ -804,7 +863,7 @@ static NTSTATUS linux_query_event_obj( int obj, enum inproc_sync_type type, EVEN
     struct ntsync_event_args args = {0};
     NTSTATUS ret;
 
-    ret = ioctl( obj, NTSYNC_IOC_EVENT_READ, &args );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_EVENT_READ, &args );
     if (ret < 0)
         return errno_to_status( errno );
     info->EventType = (type == INPROC_SYNC_AUTO_EVENT) ? SynchronizationEvent : NotificationEvent;
@@ -835,7 +894,7 @@ static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
     NTSTATUS ret;
 
     args.owner = GetCurrentThreadId();
-    ret = ioctl( obj, NTSYNC_IOC_MUTEX_UNLOCK, &args );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_MUTEX_UNLOCK, &args );
 
     if (ret < 0)
     {
@@ -871,7 +930,7 @@ static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
     struct ntsync_mutex_args args = {0};
     NTSTATUS ret;
 
-    ret = ioctl( obj, NTSYNC_IOC_MUTEX_READ, &args );
+    ret = ntsync_ioctl( obj, NTSYNC_IOC_MUTEX_READ, &args );
 
     if (ret < 0)
     {
@@ -995,7 +1054,7 @@ static NTSTATUS linux_wait_objs( int device, const DWORD count, const int *objs,
 
     do
     {
-        ret = ioctl( device, request, &args );
+        ret = ntsync_ioctl( device, request, &args );
     } while (ret < 0 && errno == EINTR);
 
     if (!ret)

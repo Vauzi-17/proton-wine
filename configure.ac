@@ -46,6 +46,7 @@ AC_ARG_WITH(inotify,   AS_HELP_STRING([--without-inotify],[do not use inotify (f
 AC_ARG_WITH(krb5,      AS_HELP_STRING([--without-krb5],[do not use krb5 (Kerberos)]))
 AC_ARG_WITH(mingw,     AS_HELP_STRING([--without-mingw],[do not use the MinGW cross-compiler]))
 AC_ARG_WITH(netapi,    AS_HELP_STRING([--without-netapi],[do not use the Samba NetAPI library]))
+AC_ARG_WITH(ntsync-android, AS_HELP_STRING([--without-ntsync-android],[do not use the userspace ntsync library (libntsync_android)]))
 AC_ARG_WITH(opencl,    AS_HELP_STRING([--without-opencl],[do not use OpenCL]),
             [if test "x$withval" = "xno"; then ac_cv_header_CL_cl_h=no; ac_cv_header_OpenCL_opencl_h=no; fi])
 AC_ARG_WITH(opengl,    AS_HELP_STRING([--without-opengl],[do not use OpenGL]))
@@ -1880,6 +1881,14 @@ then
     AC_CHECK_LIB(procstat,procstat_open_sysctl,
                  [AC_DEFINE(HAVE_LIBPROCSTAT, 1, [Define to 1 if you have the 'procstat' library (-lprocstat).])
                   AC_SUBST(PROCSTAT_LIBS,"-lprocstat")])
+fi
+
+dnl **** Check for userspace ntsync (libntsync_android) ****
+if test "x$with_ntsync_android" != "xno"
+then
+    AC_CHECK_LIB(ntsync_android,ntsync_init,
+                 [AC_DEFINE(HAVE_NTSYNC_ANDROID, 1, [Define to 1 if you have the userspace ntsync library (-lntsync_android).])
+                  AC_SUBST(NTSYNC_ANDROID_LIBS,"-lntsync_android")])
 fi
 
 dnl **** Check for libodbc ****
