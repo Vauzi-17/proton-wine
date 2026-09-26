@@ -33,7 +33,17 @@ With the Material 3 style, programs follow the desktop's color and brightness:
 - **Buttons and controls** (switch "Material buttons and controls"): a new visual style, `m3.msstyles`, with tonal pill buttons (the default button has an accent outline), Material check boxes and radio buttons, outlined edit and combo boxes with chevrons, thin scroll bar thumbs, tabs with an accent indicator, rounded group boxes and tab pages, header and toolbar hover states, tree view chevrons, slider handles and dark tooltips. Twelve color schemes (six colors, light and dark) share one set of images: uxtheme recolors them when it loads them.
 - Changing the color or brightness in the settings updates programs that are already running (Wine cached the system colors per process; running programs now reload them).
 
-Programs that draw their own controls or colors (for example wfm's search box) keep their look. The controls theme needs `C:\windows\resources\themes\m3\m3.msstyles`, which Wine installs when it updates the prefix; without it the controls keep the previous theme.
+- **Menus**: taller items, rounded hover, no embossed gray text, clean check marks and arrows, shortcuts on the right; the menu bar has the color of the title bar.
+- **Font** (switch "Roboto font in programs", on by default): Roboto for dialogs, menus, status bars and message boxes. Roboto is about 3% wider than Tahoma at the same size, so a tight label may lose a letter; the switch brings Tahoma back.
+- **Icons**: Material folder, drive, computer and documents icons in file dialogs and other shell views.
+
+### Files: a Material 3 file manager
+
+`files.exe`, opened from the launcher's Files tile, the Drives chip and the folder chips: Winlator File Manager (wfm by BrunoSX, MIT) redone in Material 3. A top app bar (up, breadcrumbs with folder menus, a path field, refresh, search, more), an action bar (copy, cut, paste, delete, new folder, new file, list or grid), a navigation drawer, rounded rows and tiles with Material icons (program and shortcut icons stay their own), an empty folder state, keyboard shortcuts (Del, F2, F5, Backspace, Ctrl+C/X/V/A), and the desktop's color and brightness. ISO, BIN/CUE images load without libcdio. English, Portuguese, Russian and Indonesian.
+
+Winlator's own File Manager (`wfm.exe`) is not replaced; the same program can be built as a `wfm.exe` for that (`m3-tools/build-wfm.sh`).
+
+Programs that draw their own controls or colors keep their look. The controls theme needs `C:\windows\resources\themes\m3\m3.msstyles`, which Wine installs when it updates the prefix; without it the controls keep the previous theme.
 
 ## Environment variables
 
@@ -58,7 +68,8 @@ The same source was built natively for x86_64 Linux without `/dev/ntsync` (users
 
 ## Known limitations
 
-- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows); the programs part (wfm, winecfg, notepad, switching colors while they run) the same way. On a device only the taskbar has been seen so far.
+- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows); the programs part (wfm, Files, winecfg, notepad, file dialogs, switching colors while they run) the same way. On a device only the taskbar has been seen so far.
+- Running programs keep their fonts until they restart, and the shell icons change for new programs only.
 
 - Not tested on an Android device. If a game misbehaves, compare with `PROTON_NO_NTSYNC=1`.
 - This tree has no x86_64 build here, only arm64ec.

@@ -1,0 +1,54 @@
+From a12631997529de6a15b9da81588c9310c087052a Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 11:35:34 +0000
+Subject: [PATCH 15/15] explorer: Open Files from the Material 3 launcher.
+
+The Files tile, the Drives chip and the folder chips open Files when
+it is there, the file manager of the Material 3 style.
+---
+ programs/explorer/m3launcher.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/programs/explorer/m3launcher.c b/programs/explorer/m3launcher.c
+index 3550b1243..0132a69a3 100644
+--- a/programs/explorer/m3launcher.c
++++ b/programs/explorer/m3launcher.c
+@@ -219,7 +219,7 @@ static void build_items(void)
+     add_item( ACTION_SETTINGS, KIND_ICON_BUTTON, IDS_M3_SETTINGS, M3_ICON_PALETTE );
+     add_item( ACTION_SHUT_DOWN, KIND_ICON_BUTTON, IDS_M3_SHUT_DOWN, M3_ICON_POWER );
+ 
+-    add_program( IDS_M3_FILES, M3_ICON_FOLDER, L"wfm.exe", L"winefile.exe" );
++    add_program( IDS_M3_FILES, M3_ICON_FOLDER, L"files.exe", L"wfm.exe" );
+     add_program( IDS_XP_COMMAND_PROMPT, M3_ICON_TERMINAL, L"cmd.exe", NULL );
+     add_program( IDS_M3_NOTEPAD, M3_ICON_EDIT_NOTE, L"notepad.exe", NULL );
+     add_program( IDS_XP_WINECFG, M3_ICON_TUNE, L"winecfg.exe", NULL );
+@@ -236,7 +236,7 @@ static void build_items(void)
+     add_folder( KIND_CHIP, IDS_M3_DOCUMENTS, M3_ICON_DESCRIPTION, CSIDL_PERSONAL );
+     add_folder( KIND_CHIP, IDS_M3_PICTURES, M3_ICON_IMAGE, CSIDL_MYPICTURES );
+     add_folder( KIND_CHIP, IDS_M3_MUSIC, M3_ICON_MUSIC_NOTE, CSIDL_MYMUSIC );
+-    add_program( IDS_M3_DRIVES, M3_ICON_HARD_DRIVE, L"wfm.exe", NULL );
++    add_program( IDS_M3_DRIVES, M3_ICON_HARD_DRIVE, L"files.exe", L"wfm.exe" );
+     if (items[item_count - 1].glyph == M3_ICON_HARD_DRIVE) items[item_count - 1].kind = KIND_CHIP;
+     else add_folder( KIND_CHIP, IDS_M3_DRIVES, M3_ICON_HARD_DRIVE, CSIDL_DRIVES );
+     add_item( ACTION_ALL_PROGRAMS, KIND_CHIP, IDS_M3_ALL_PROGRAMS, M3_ICON_GRID_VIEW );
+@@ -535,6 +535,20 @@ static void execute( const struct launcher_item *item )
+         ShellExecuteW( NULL, NULL, item->target, NULL, NULL, SW_SHOWNORMAL );
+         break;
+     case ACTION_FOLDER:
++    {
++        WCHAR path[MAX_PATH], files[MAX_PATH], args[MAX_PATH + 2];
++
++        /* file system folders open in Files */
++        if (SUCCEEDED(SHGetFolderPathW( NULL, item->csidl, NULL, SHGFP_TYPE_CURRENT, path )) &&
++            SearchPathW( NULL, L"files.exe", NULL, MAX_PATH, files, NULL ))
++        {
++            lstrcpyW( args, L"\"" );
++            lstrcatW( args, path );
++            lstrcatW( args, L"\"" );
++            ShellExecuteW( NULL, NULL, files, args, NULL, SW_SHOWNORMAL );
++            break;
++        }
++    }
+         if (FAILED(SHGetSpecialFolderLocation( NULL, item->csidl, &pidl ))) break;
+         memset( &sei, 0, sizeof(sei) );
+         sei.cbSize = sizeof(sei);

@@ -22,6 +22,34 @@ def rename(font, family, ps):
         name.setName(val, nid, 3, 1, 0x409)
         name.setName(val, nid, 1, 0, 0)
 
+# the symbols of Files (programs/files), a font of its own
+FILES_ICONS = ["album","apps","arrow_forward","arrow_upward","article","check","chevron_right","close","code",
+               "computer","content_copy","content_cut","content_paste","create_new_folder","delete","deployed_code",
+               "description","desktop_windows","draft","edit","expand_more","extension","folder","folder_zip",
+               "font_download","grid_view","hard_drive","image","info","link","more_vert","movie","music_note",
+               "note_add","picture_as_pdf","refresh","search","select_all","settings","terminal","view_list"]
+
+def symbols(icons, family, out_name):
+    codes = [cp[i] for i in icons]
+    for fill, suffix in ((0, ""), (1, " Filled")):
+        font = TTFont("symbols.ttf")
+        opts = subset.Options()
+        opts.layout_features = []
+        opts.name_IDs = ["*"]
+        opts.notdef_outline = True
+        opts.glyph_names = False
+        sub = subset.Subsetter(opts)
+        sub.populate(unicodes=codes)
+        sub.subset(font)
+        font = instancer.instantiateVariableFont(font, {"FILL": fill, "wght": 400, "GRAD": 0, "opsz": 24})
+        fam = family + suffix
+        rename(font, fam, fam.replace(" ", ""))
+        out = out_name % ("_filled" if fill else "")
+        font.save(out)
+        print(out, len(open(out, "rb").read()))
+
+symbols(FILES_ICONS, "Wine Files Symbols", "files_symbols%s.ttf")
+
 for fill, suffix in ((0, ""), (1, " Filled")):
     font = TTFont("symbols.ttf")
     opts = subset.Options()
