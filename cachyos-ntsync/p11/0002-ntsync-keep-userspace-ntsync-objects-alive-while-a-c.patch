@@ -1,0 +1,212 @@
+From 634979c3b60209e32a56c54fdcc5175cd8b8cf81 Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 04:00:04 +0000
+Subject: [PATCH 2/2] ntsync: keep userspace ntsync objects alive while a
+ client uses them
+
+A kernel ntsync object stays alive for as long as a client holds its fd.
+A userspace ntsync handle carries no such reference, so when the last
+handle to, say, a mutex was closed while another thread waited on it,
+wineserver destroyed the object and ntsync_close() failed the pending
+wait (the library's documented behaviour). The object also left
+inproc_mutexes, so a later owner death was never reported as
+WAIT_ABANDONED. kernel32's sync test catches exactly this (sync.c:252,
+387 and 393 failed only with userspace ntsync), and ntdll's sync test
+skipped its "handle closed before wait started" cases.
+
+get_inproc_sync_fd now also returns, in userspace mode, a handle to the
+server's inproc_sync object. The client keeps it in its cache entry and
+closes it, with a raw close_handle request because fd_cache_mutex may be
+held, when the entry's last reference goes away. This is the model the
+Proton 10 userspace backend already uses.
+
+With this, natively on x86_64 with the userspace backend, Wine's ntdll
+and kernel32 sync, thread, process and om tests give the same results as
+server-side synchronization, with no tests skipped.
+
+The protocol change is applied in build-step0-autogen.sh, next to the
+existing protocol patch, so make_requests picks it up.
+---
+ .../ntsync/dlls_ntdll_unix_sync.c.patch       | 54 ++++++++++++++++---
+ .../patches/ntsync/server_inproc_sync.c.patch | 21 ++++++--
+ .../patches/ntsync/server_protocol.def.patch  | 12 +++++
+ build-scripts/build-step-arm64ec.sh           |  2 +
+ build-scripts/build-step0-autogen.sh          |  2 +
+ 5 files changed, 81 insertions(+), 10 deletions(-)
+ create mode 100644 android/patches/ntsync/server_protocol.def.patch
+
+diff --git a/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch b/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
+index 92bac92ae..cd7f2209a 100644
+--- a/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
++++ b/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+-index bba8f8a74..6d9a7d4c3 100644
++index bba8f8a74..e3b79be9d 100644
+ --- a/dlls/ntdll/unix/sync.c
+ +++ b/dlls/ntdll/unix/sync.c
+ @@ -61,7 +61,14 @@
+@@ -276,26 +276,66 @@ index bba8f8a74..6d9a7d4c3 100644
+      }
+      else if (timeout->QuadPart <= 0)
+      {
+-@@ -637,7 +816,12 @@ static void release_inproc_sync( struct inproc_sync *sync )
++@@ -543,6 +722,7 @@ struct inproc_sync
++     unsigned int   access;    /* handle access rights */
++     unsigned short type;      /* enum inproc_sync_type as short to save space */
++     unsigned short closed;    /* fd has been closed but sync is still referenced */
+++    obj_handle_t   handle;    /* userspace ntsync: server handle keeping the object alive */
++ };
++ 
++ #define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync))
++@@ -602,6 +782,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++     }
++ 
++     cache->fd = sync->fd;
+++    cache->handle = sync->handle;
++     cache->access = sync->access;
++     cache->type = sync->type;
++     cache->closed = sync->closed;
++@@ -634,10 +815,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
++     /* save the fd now; as soon as the refcount hits 0 we cannot
++      * access the cache anymore */
++     int fd = sync->fd;
+++#ifdef __ANDROID__
+++    obj_handle_t handle = sync->handle;
+++#endif
+      LONG ref = InterlockedDecrement( &sync->refcount );
+  
+      assert( ref >= 0 );
+ +#ifdef __ANDROID__
+-+    /* userspace ntsync objects are owned by the server; nothing to close */
+-+    if (!ref && !ntsync_userspace) close( fd );
+++    /* userspace ntsync objects are owned by the server: drop the handle that
+++     * kept this one alive. Not NtClose(), we may hold fd_cache_mutex here. */
+++    if (!ref && ntsync_userspace)
+++    {
+++        if (handle)
+++        {
+++            SERVER_START_REQ( close_handle )
+++            {
+++                req->handle = handle;
+++                wine_server_call( req );
+++            }
+++            SERVER_END_REQ;
+++        }
+++    }
+++    else if (!ref) close( fd );
+ +#else
+      if (!ref) close( fd );
+ +#endif
+  }
+  
+  static struct inproc_sync *get_cached_inproc_sync( HANDLE handle )
+-@@ -678,8 +862,18 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
++@@ -678,8 +880,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
+          {
+              obj_handle_t fd_handle;
+              sync->refcount = 1;
+++            sync->handle = 0;
+ +#ifdef __ANDROID__
+ +            /* userspace ntsync object handle is passed in sync_shm_idx */
+-+            if (ntsync_userspace) sync->fd = reply->sync_shm_idx;
+++            if (ntsync_userspace)
+++            {
+++                sync->fd = reply->sync_shm_idx;
+++                sync->handle = reply->sync_handle;
+++            }
+ +            else
+ +            {
+ +                sync->fd = wine_server_receive_fd( &fd_handle );
+@@ -308,7 +348,7 @@ index bba8f8a74..6d9a7d4c3 100644
+              sync->access = reply->access;
+              sync->type = reply->type;
+              sync->closed = 0;
+-@@ -922,6 +1116,10 @@ int get_inproc_alert_fd(void)
++@@ -922,6 +1139,10 @@ int get_inproc_alert_fd(void)
+              if (!server_call_unlocked( req ))
+              {
+                  if (do_fsync()) data->alert_fd = fd = reply->sync_shm_idx;
+diff --git a/android/patches/ntsync/server_inproc_sync.c.patch b/android/patches/ntsync/server_inproc_sync.c.patch
+index fe23f5e19..5905014ff 100644
+--- a/android/patches/ntsync/server_inproc_sync.c.patch
++++ b/android/patches/ntsync/server_inproc_sync.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+-index 497e9a94f..c3109c9f5 100644
++index 497e9a94f..39dc25a63 100644
+ --- a/server/inproc_sync.c
+ +++ b/server/inproc_sync.c
+ @@ -37,7 +37,14 @@
+@@ -242,13 +242,28 @@ index 497e9a94f..c3109c9f5 100644
+  int get_inproc_device_fd(void)
+  {
+      return -1;
+-@@ -409,6 +545,10 @@ DECL_HANDLER(get_inproc_sync_fd)
++@@ -409,6 +545,25 @@ DECL_HANDLER(get_inproc_sync_fd)
+          reply->sync_shm_idx = esync_shm_idx;
+          send_client_fd( current->process, fd, req->handle );
+      }
+ +#ifdef __ANDROID__
+ +    /* userspace ntsync object handle; valid in every process */
+-+    else if (ntsync_userspace) reply->sync_shm_idx = fd;
+++    else if (ntsync_userspace)
+++    {
+++        struct object *sync = get_obj_sync( obj );
+++
+++        reply->sync_shm_idx = fd;
+++        /* A kernel ntsync fd keeps the object alive in the client. A userspace
+++         * handle does not, so give the client a handle to the server object
+++         * instead, which it closes once it stops using the object. Without it,
+++         * closing the last handle while another thread waits destroyed the
+++         * object: the wait failed, and an abandoned mutex was never reported. */
+++        if (sync)
+++        {
+++            reply->sync_handle = alloc_handle_no_access_check( current->process, sync, 0, 0 );
+++            release_object( sync );
+++        }
+++    }
+ +#endif
+      else
+          send_client_fd( current->process, fd, req->handle );
+diff --git a/android/patches/ntsync/server_protocol.def.patch b/android/patches/ntsync/server_protocol.def.patch
+new file mode 100644
+index 000000000..279218226
+--- /dev/null
++++ b/android/patches/ntsync/server_protocol.def.patch
+@@ -0,0 +1,12 @@
++diff --git a/server/protocol.def b/server/protocol.def
++index 7ebe0315a..f4da63ddb 100644
++--- a/server/protocol.def
+++++ b/server/protocol.def
++@@ -4256,6 +4256,7 @@ enum inproc_sync_type
++     int           type;         /* inproc sync type */
++     unsigned int access;        /* handle access rights */
++     unsigned int sync_shm_idx;
+++    obj_handle_t sync_handle;   /* userspace ntsync: handle keeping the object alive */
++ @END
++ 
++ 
+diff --git a/build-scripts/build-step-arm64ec.sh b/build-scripts/build-step-arm64ec.sh
+index 4170518bf..46a238a67 100755
+--- a/build-scripts/build-step-arm64ec.sh
++++ b/build-scripts/build-step-arm64ec.sh
+@@ -376,6 +376,8 @@ do
+       "dlls/ntdll/unix/sync.c|ntsync_userspace|userspace ntsync client ops"
+       "server/esync.c|!ntsync_available()|ntsync takes precedence over esync (wineserver)"
+       "dlls/ntdll/unix/esync.c|esync_enabled = 1;|client esync follows wineserver's choice"
++      "server/inproc_sync.c|reply->sync_handle = alloc_handle_no_access_check|userspace ntsync objects stay alive while a client uses them (wineserver)"
++      "dlls/ntdll/unix/sync.c|sync->handle = reply->sync_handle;|userspace ntsync objects stay alive while a client uses them (client)"
+     )
+     for row in "${MARKERS[@]}"; do
+       m_file="${row%%|*}"; rest="${row#*|}"; m_token="${rest%%|*}"; m_what="${rest#*|}"
+diff --git a/build-scripts/build-step0-autogen.sh b/build-scripts/build-step0-autogen.sh
+index 4aeba8265..ba281ed82 100644
+--- a/build-scripts/build-step0-autogen.sh
++++ b/build-scripts/build-step0-autogen.sh
+@@ -1,3 +1,5 @@
+ #!/bin/sh
+ git apply "./android/patches/server_protocol.def.patch"
++# userspace ntsync: reply field that keeps objects alive in clients
++git apply "./android/patches/ntsync/server_protocol.def.patch"
+ ./autogen.sh

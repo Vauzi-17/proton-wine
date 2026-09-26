@@ -12,7 +12,9 @@ The userspace ntsync patches are the ones from the GE-Proton 11.0-5 ntsync build
 2. otherwise userspace ntsync, in a shared memory region under `$TMPDIR` (or `$NTSYNC_SHM`)
 3. otherwise esync if `WINEESYNC=1`, else server-side synchronization
 
-**Unlike the 11.0-5 ntsync build, esync can stay on.** There, `WINEESYNC=1` (Winlator's default) made wineserver pick esync for objects while it announced ntsync, and the container hung at a black desktop. Here ntsync takes precedence in wineserver and in every process.
+**Unlike the 11.0-5 ntsync build, esync can stay on.** There, `WINEESYNC=1` (Winlator's default) started esync in wineserver and still selected ntsync, and a prefix hung on startup (reproduced natively: `wineboot` never finished). Here ntsync takes precedence in wineserver and in every process.
+
+This build also fixes a lifetime bug in the userspace backend (also present in the 11.0-5 ntsync build): closing the last handle to an object while another thread waited on it failed that wait, and an abandoned mutex was not reported. Clients now keep the object alive while they use it.
 
 ## Environment variables
 
@@ -26,6 +28,14 @@ The userspace ntsync patches are the ones from the GE-Proton 11.0-5 ntsync build
 - `proton-cachyos-wine-11.0-ntsync-arm64ec.wcp.xz`: Winlator CMOD & Ludashi
 
 `versionName` is `11.0-20260703-arm64ec` like The412Banner's build of this tree; the Proton `versionCode` is 2 so both can be installed side by side.
+
+## Testing
+
+The same source was built natively for x86_64 Linux without `/dev/ntsync` (userspace backend, fsync off as on Android):
+
+- Wine's `ntdll` and `kernel32` tests for `sync`, `thread`, `process` and `om` give the same results with userspace ntsync as with server-side synchronization; the `sync` tests also with `WINEESYNC=1`.
+- A focused test (events, semaphores, mutexes, wait-all, message-queue waits, alertable APCs, named objects across processes, `WAIT_ABANDONED` after the owner exits) passes in every mode.
+- Event ping-pong: 34-39 µs per round trip with userspace ntsync, 62 µs with server-side synchronization.
 
 ## Known limitations
 

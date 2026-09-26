@@ -1,8 +1,8 @@
 From 61d408020d9c4fc0df08ad13fba51c4abae65cde Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 03:36:39 +0000
-Subject: [PATCH] ntsync: add GameNative's userspace ntsync to proton-cachyos
- 11 bionic
+Subject: [PATCH 1/2] ntsync: add GameNative's userspace ntsync to
+ proton-cachyos 11 bionic
 
 Ports the userspace ntsync backend (GameNative/ntsync-android) onto
 The412Banner's Android port of Proton-CachyOS 11 (1233149d, their
