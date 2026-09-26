@@ -20,7 +20,7 @@ This build also fixes a lifetime bug in the userspace backend (also present in t
 
 The Wine desktop (explorer) gets a Material 3 look in place of The412Banner's XP style: a flat taskbar with a launcher button, pill shaped task buttons and a two line clock; a launcher sheet (user, built-in programs, start menu shortcuts, places) instead of the start menu; and a background of translucent circles in place of the app's default wallpaper.
 
-- Right click the desktop, **Display Properties**: style (Material 3, Windows XP, Classic), color (purple, blue, teal, green, orange, pink) and brightness (follow the app's light or dark theme, light, dark).
+- **Desktop settings** (the palette button of the launcher, or right click the desktop, Display Properties): style (Material 3, Windows XP, Classic), color (purple, blue, teal, green, orange, pink), brightness (auto follows the app's light or dark theme, light, dark), clock, taskbar rows and background. Changes apply at once.
 - `WINE_TASKBAR_STYLE=xp` or `classic` brings back the other styles.
 - Window title bars and dialog buttons are still the plain Wine ones in the Material 3 style. The XP frames and buttons come back with the XP style.
 - Fonts: Roboto and Material Symbols (Apache 2.0), loaded by explorer only.
