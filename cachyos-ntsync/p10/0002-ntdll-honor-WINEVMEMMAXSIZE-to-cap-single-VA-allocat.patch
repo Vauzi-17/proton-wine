@@ -1,0 +1,53 @@
+From 1e1492fa5daa787d917a7be4829562466c10b7fb Mon Sep 17 00:00:00 2001
+From: The412Banner <205237651+The412Banner@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 18:50:54 -0400
+Subject: [PATCH 2/7] ntdll: honor WINEVMEMMAXSIZE to cap single VA allocations
+
+Read WINEVMEMMAXSIZE (MB) in virtual_init and reject any single
+NtAllocateVirtualMemory whose size exceeds it with
+STATUS_WORKING_SET_LIMIT_RANGE. Inert when the env var is unset or
+zero (vmem_max_size == 0), so behavior is unchanged for anyone not
+setting it. Lets heavy titles (Deus Ex: Mankind Divided) fail an
+oversized ~489 GB VA reservation gracefully instead of OOM.
+
+(cherry picked from commit c7aa98163bd7d62e81f48533bf6f05b8d46a8060)
+---
+ dlls/ntdll/unix/virtual.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index e23353a69..e47dd6fb5 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -304,6 +304,8 @@ static void *working_set_limit   = (void *)0x7fff0000;
+ 
+ static void *host_addr_space_limit;  /* top of the host virtual address space */
+ 
++static SIZE_T vmem_max_size = 0;  /* WINEVMEMMAXSIZE: cap on a single VA allocation, in bytes (0 = unlimited) */
++
+ static struct file_view *arm64ec_view;
+ static const ptrdiff_t max_try_map_step = 0x40000000;
+ static BOOL increase_try_map_step = TRUE;
+@@ -3875,6 +3877,12 @@ void virtual_init(void)
+         unsetenv( "WINEPRELOADRESERVE" );
+     }
+ 
++    if ((env_var = getenv( "WINEVMEMMAXSIZE" )))
++    {
++        vmem_max_size = (SIZE_T)strtol( env_var, NULL, 10 ) << 20;
++        TRACE( "virtual memory max size: %ld\n", (long)vmem_max_size );
++    }
++
+     /* try to find space in a reserved area for the views and pages protection table */
+ #ifdef _WIN64
+     pages_vprot_size = ((size_t)host_addr_space_limit >> page_shift >> pages_vprot_shift) + 1;
+@@ -5221,7 +5229,8 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
+ 
+     /* Round parameters to a page boundary */
+ 
+-    if (is_beyond_limit( 0, size, working_set_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
++    if (is_beyond_limit( 0, size, working_set_limit ) || (vmem_max_size > 0 && size > vmem_max_size))
++        return STATUS_WORKING_SET_LIMIT_RANGE;
+ 
+     if (*ret)
+     {

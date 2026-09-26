@@ -1,0 +1,45 @@
+From c33c2c3a13786612ce7a2edfc332a123b1aa8eed Mon Sep 17 00:00:00 2001
+From: The412Banner <205237651+The412Banner@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 05:27:59 -0400
+Subject: [PATCH 1/7] ntdll: env-gated fast-yield in NtYieldExecution
+ (WINE_FAST_YIELD)
+
+Some titles busy-wait a worker via SwitchToThread -> NtYieldExecution and
+peg one core at 100% regardless of the FPS cap. Gate a fast yield path
+behind the WINE_FAST_YIELD env var: when set to a nonzero value, do
+usleep(0) and return STATUS_SUCCESS instead of the full sched_yield +
+getrusage voluntary-context-switch accounting.
+
+Default (unset or 0) preserves the stock behavior verbatim, so this is a
+per-container opt-in with no registry or profile changes. The env var is
+cached in a static after the first call.
+
+(cherry picked from commit 90130591f42dbd50b8e80458c51f8f267984de0a)
+---
+ dlls/ntdll/unix/sync.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index b7304fafb..8317b94a4 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -2819,6 +2819,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
+  */
+ NTSTATUS WINAPI NtYieldExecution(void)
+ {
++    static int fast_yield = -1;
++
++    if (fast_yield < 0)
++    {
++        const char *e = getenv( "WINE_FAST_YIELD" );
++        fast_yield = e && atoi( e );
++    }
++    if (fast_yield)
++    {
++        usleep( 0 );
++        return STATUS_SUCCESS;
++    }
++
+ #ifdef HAVE_SCHED_YIELD
+ #ifdef RUSAGE_THREAD
+     struct rusage u1, u2;
