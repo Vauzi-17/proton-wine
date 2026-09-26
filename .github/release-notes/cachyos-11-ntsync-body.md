@@ -23,6 +23,7 @@ The Wine desktop (explorer) gets a Material 3 look in place of The412Banner's XP
 - **Desktop settings** (the palette button of the launcher, or right click the desktop, Display Properties): style (Material 3, Windows XP, Classic), color (purple, blue, teal, green, orange, pink), brightness (auto follows the app's light or dark theme, light, dark), clock, taskbar rows and background. Changes apply at once.
 - `WINE_TASKBAR_STYLE=xp` or `classic` brings back the other styles.
 - Fonts: Roboto and Material Symbols (Apache 2.0). Roboto is also copied into `C:\windows\Fonts` for window titles.
+- The launcher's rounded corners are painted with what is behind it (the desktop, then the windows under it). Winlator's X server has no shape extension, so the window region used before showed up as a white square around the sheet.
 
 ### Programs in Material 3 (wfm, winecfg, dialogs, ...)
 
@@ -41,9 +42,18 @@ With the Material 3 style, programs follow the desktop's color and brightness:
 
 `files.exe`, opened from the launcher's Files tile, the Drives chip and the folder chips: Winlator File Manager (wfm by BrunoSX, MIT) redone in Material 3. A top app bar (up, breadcrumbs with folder menus, a path field, refresh, search, more), an action bar (copy, cut, paste, delete, new folder, new file, list or grid), a navigation drawer, rounded rows and tiles with Material icons (program and shortcut icons stay their own), an empty folder state, keyboard shortcuts (Del, F2, F5, Backspace, Ctrl+C/X/V/A), and the desktop's color and brightness. ISO, BIN/CUE images load without libcdio. English, Portuguese, Russian and Indonesian.
 
-Winlator's own File Manager (`wfm.exe`) is not replaced; the same program can be built as a `wfm.exe` for that (`m3-tools/build-wfm.sh`).
+**Files is the default file manager** (switch "Files as the file manager", on by default, Material 3 style only):
 
-Programs that draw their own controls or colors keep their look. The controls theme needs `C:\windows\resources\themes\m3\m3.msstyles`, which Wine installs when it updates the prefix; without it the controls keep the previous theme.
+- Winlator starts `C:\windows\wfm.exe` when a container opens without a shortcut. When the desktop starts, that file is replaced by a copy of Files and Winlator's own is kept as `C:\windows\wfm-winlator.exe`. Turning the switch off or choosing another style puts Winlator's back.
+- Winlator writes its `wfm.exe` again when the app or the prefix is updated; it is replaced again at the next start.
+- Folders that programs open through the shell (`explorer.exe <folder>`) open in Files.
+- Winlator's File Manager menu entries (the 7-Zip "Open Archive / Extract" items in `HKCU\Software\Winlator\WFM\ContextMenu`) and the CD drive (X:) ISO loading work in Files as in wfm.
+
+Files can still be built as a standalone `wfm.exe` for other Wine builds (`m3-tools/build-wfm.sh`).
+
+**Use a new container.** Winlator turns off Wine's prefix updates, so a container made with an earlier build doesn't get `files.exe` or `C:\windows\resources\themes\m3\m3.msstyles`: without them the file manager stays wfm and the controls keep the previous theme.
+
+Programs that draw their own controls or colors keep their look.
 
 ## Environment variables
 
@@ -68,7 +78,8 @@ The same source was built natively for x86_64 Linux without `/dev/ntsync` (users
 
 ## Known limitations
 
-- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows); the programs part (wfm, Files, winecfg, notepad, file dialogs, switching colors while they run) the same way. On a device only the taskbar has been seen so far.
+- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows); the programs part (wfm, Files, winecfg, notepad, file dialogs, switching colors while they run) the same way, and the wfm replacement with Winlator's own `winhandler.exe` and `wfm.exe`. On a device, the taskbar, launcher and settings page of an earlier build have been seen; this build's title bars, controls, menus and Files have not.
+- The launcher's corners show a window under them as it was when the launcher opened; a game drawing with Vulkan or OpenGL may show as black there.
 - Running programs keep their fonts until they restart, and the shell icons change for new programs only.
 
 - Not tested on an Android device. If a game misbehaves, compare with `PROTON_NO_NTSYNC=1`.
