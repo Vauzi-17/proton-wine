@@ -22,8 +22,18 @@ The Wine desktop (explorer) gets a Material 3 look in place of The412Banner's XP
 
 - **Desktop settings** (the palette button of the launcher, or right click the desktop, Display Properties): style (Material 3, Windows XP, Classic), color (purple, blue, teal, green, orange, pink), brightness (auto follows the app's light or dark theme, light, dark), clock, taskbar rows and background. Changes apply at once.
 - `WINE_TASKBAR_STYLE=xp` or `classic` brings back the other styles.
-- Window title bars and dialog buttons are still the plain Wine ones in the Material 3 style. The XP frames and buttons come back with the XP style.
-- Fonts: Roboto and Material Symbols (Apache 2.0), loaded by explorer only.
+- Fonts: Roboto and Material Symbols (Apache 2.0). Roboto is also copied into `C:\windows\Fonts` for window titles.
+
+### Programs in Material 3 (wfm, winecfg, dialogs, ...)
+
+With the Material 3 style, programs follow the desktop's color and brightness:
+
+- **Colors**: window, menu, selection and button colors come from the Material 3 scheme (switch "Material colors in programs"). The app's own colors (Winlator's light or dark theme) are restored when it is off or another style is chosen.
+- **Title bars**: flat title bars in the scheme's surface color, title in Roboto Medium, thin caption glyphs; the close button turns red when pressed.
+- **Buttons and controls** (switch "Material buttons and controls"): a new visual style, `m3.msstyles`, with tonal pill buttons (the default button has an accent outline), Material check boxes and radio buttons, outlined edit and combo boxes with chevrons, thin scroll bar thumbs, tabs with an accent indicator, rounded group boxes and tab pages, header and toolbar hover states, tree view chevrons, slider handles and dark tooltips. Twelve color schemes (six colors, light and dark) share one set of images: uxtheme recolors them when it loads them.
+- Changing the color or brightness in the settings updates programs that are already running (Wine cached the system colors per process; running programs now reload them).
+
+Programs that draw their own controls or colors (for example wfm's search box) keep their look. The controls theme needs `C:\windows\resources\themes\m3\m3.msstyles`, which Wine installs when it updates the prefix; without it the controls keep the previous theme.
 
 ## Environment variables
 
@@ -48,7 +58,7 @@ The same source was built natively for x86_64 Linux without `/dev/ntsync` (users
 
 ## Known limitations
 
-- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows), not on an Android device yet.
+- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows); the programs part (wfm, winecfg, notepad, switching colors while they run) the same way. On a device only the taskbar has been seen so far.
 
 - Not tested on an Android device. If a game misbehaves, compare with `PROTON_NO_NTSYNC=1`.
 - This tree has no x86_64 build here, only arm64ec.
