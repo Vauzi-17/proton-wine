@@ -16,6 +16,15 @@ The userspace ntsync patches are the ones from the GE-Proton 11.0-5 ntsync build
 
 This build also fixes a lifetime bug in the userspace backend (also present in the 11.0-5 ntsync build): closing the last handle to an object while another thread waited on it failed that wait, and an abandoned mutex was not reported. Clients now keep the object alive while they use it.
 
+## Desktop: Material 3 style (new default)
+
+The Wine desktop (explorer) gets a Material 3 look in place of The412Banner's XP style: a flat taskbar with a launcher button, pill shaped task buttons and a two line clock; a launcher sheet (user, built-in programs, start menu shortcuts, places) instead of the start menu; and a background of translucent circles in place of the app's default wallpaper.
+
+- Right click the desktop, **Display Properties**: style (Material 3, Windows XP, Classic), color (purple, blue, teal, green, orange, pink) and brightness (follow the app's light or dark theme, light, dark).
+- `WINE_TASKBAR_STYLE=xp` or `classic` brings back the other styles.
+- Window title bars and dialog buttons are still the plain Wine ones in the Material 3 style. The XP frames and buttons come back with the XP style.
+- Fonts: Roboto and Material Symbols (Apache 2.0), loaded by explorer only.
+
 ## Environment variables
 
 - `PROTON_NO_NTSYNC=1`: disable ntsync; esync is used if `WINEESYNC=1`
@@ -38,6 +47,8 @@ The same source was built natively for x86_64 Linux without `/dev/ntsync` (users
 - Event ping-pong: 34-39 µs per round trip with userspace ntsync, 62 µs with server-side synchronization.
 
 ## Known limitations
+
+- The Material 3 desktop was tested in a native build under Xvfb (1280x720, light and dark, one and two taskbar rows), not on an Android device yet.
 
 - Not tested on an Android device. If a game misbehaves, compare with `PROTON_NO_NTSYNC=1`.
 - This tree has no x86_64 build here, only arm64ec.
