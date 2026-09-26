@@ -1,0 +1,58 @@
+From 2e49599967ab12cb5d12ee7929c4e621c9a19f4f Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 23:42:44 +0000
+Subject: [PATCH 6/7] ntsync: keep a reference to the sync device for as long
+ as wineserver runs
+
+get_linux_device() caches the device in linux_device_object but gave that
+pointer no reference of its own, and since "extra debugging" a destroyed
+device is never recreated once "initialized" is set.
+
+With the userspace backend clients get no handle to the device, so the
+first get_linux_sync_device request released the only reference and
+destroyed it. Every later request, and every get_linux_sync_obj, then
+failed with STATUS_NOT_IMPLEMENTED and each wait and signal fell back to
+the server after an extra round trip; an event ping-pong ran at 181 us
+per round trip against 66 us for plain server-side sync. The kernel
+backend has the same problem once all client processes holding a device
+handle have exited under a persistent wineserver.
+
+Hold a reference in linux_device_object for both backends. The same ping-
+pong now takes 34 us, and Wine's ntdll/kernel32 sync, thread, process and
+om tests give the same results as server-side synchronization.
+
+The release notes record this and the native test results, and mark the
+first prerelease as superseded.
+---
+ server/inproc_sync.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+index 0d46e4c31..2b2348cf4 100644
+--- a/server/inproc_sync.c
++++ b/server/inproc_sync.c
+@@ -190,7 +190,9 @@ static struct linux_device *get_linux_device(void)
+         }
+         device->fd = NULL;
+         fprintf( stderr, "wine: using fast synchronization (userspace ntsync).\n" );
+-        linux_device_object = device;
++        /* clients get no handle to this device, so the cached pointer must
++         * hold its own reference or the first release destroys it */
++        linux_device_object = (struct linux_device *)grab_object( device );
+         initialized = 1;
+         return device;
+     }
+@@ -212,7 +214,12 @@ static struct linux_device *get_linux_device(void)
+         return NULL;
+     }
+ 
+-    linux_device_object = device;
++    /* Keep a reference for the cached pointer. Client handles used to be the
++     * only thing keeping the device alive, and once "initialized" is set a
++     * destroyed device is never recreated: ntsync silently stopped working
++     * as soon as every client had exited (e.g. with a persistent wineserver),
++     * or if an object was created before any client asked for the device. */
++    linux_device_object = (struct linux_device *)grab_object( device );
+     initialized = 1;
+     return device;
+ }

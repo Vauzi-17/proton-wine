@@ -1,0 +1,23 @@
+From b702c613dd686b4021f82203eb00f71cd1250cec Mon Sep 17 00:00:00 2001
+From: The412Banner <205237651+The412Banner@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 02:06:23 -0400
+Subject: [PATCH 4/7] win32u/font: raise MAX_FONT_HANDLES 256 -> 32768
+
+(cherry picked from commit 760bbaebae2928b9f2084f3074229e3b9c245dec, dlls/win32u/font.c only)
+---
+ dlls/win32u/font.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
+index 0bbf6ef1d..da34fe7d2 100644
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -2301,7 +2301,7 @@ static struct gdi_font_face *find_matching_face( const LOGFONTW *lf, CHARSETINFO
+ /* realized font objects */
+ 
+ #define FIRST_FONT_HANDLE 1
+-#define MAX_FONT_HANDLES  256
++#define MAX_FONT_HANDLES  32768
+ 
+ struct font_handle_entry
+ {

@@ -1,0 +1,278 @@
+# proton-cachyos 11 (bionic, arm64ec) + userspace ntsync.
+#
+# Source: The412Banner's Android port of Proton-CachyOS 11 (BASE_SHA), with
+# the patch series in cachyos-ntsync/p11/ applied on top by `git am`. The
+# build steps are that tree's own scripts, as in The412Banner's workflow.
+name: Build proton-cachyos 11 + userspace ntsync (arm64ec)
+
+on:
+  push:
+    branches: [ claude/proton-10-ntsync-compile-20dq12 ]
+    paths:
+      - 'cachyos-ntsync/p11/**'
+      - '.github/workflows/build-cachyos11-ntsync.yml'
+      - '.github/release-notes/cachyos-11-ntsync-body.md'
+  workflow_dispatch:
+
+env:
+  BASE_REPO: https://github.com/The412Banner/proton-wine
+  BASE_SHA: 1233149df3afa98847e679e099511fd498db76a0
+  NTSYNC_ANDROID_REF: 7ce6435e5979b1cb5341aa4b299f31e8937fe121
+  SRC: ${{ github.workspace }}/src
+  OUTPUT_DIR: /home/runner/compiled-files-aarch64
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Checkout patch series
+        uses: actions/checkout@v4
+        with:
+          path: recipe
+
+      - name: Fetch base tree and apply patches
+        run: |
+          git init -q "$SRC" && cd "$SRC"
+          git remote add origin "$BASE_REPO"
+          git fetch -q --depth 1 origin "$BASE_SHA"
+          git checkout -q FETCH_HEAD
+          git -c user.name=ci -c user.email=ci@localhost am --whitespace=nowarn "$GITHUB_WORKSPACE"/recipe/cachyos-ntsync/p11/*.patch
+          git submodule update --init --recursive --depth 50
+          git log --oneline -3
+
+      - name: Set up build environment
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget curl unzip flex bison gettext \
+            autoconf automake libtool pkg-config ccache zstd mingw-w64 gcc-multilib g++-multilib \
+            libfreetype6-dev libfreetype6-dev:i386 libpng-dev libpng-dev:i386 zlib1g-dev zlib1g-dev:i386
+
+      - name: Download and extract termuxfs
+        run: |
+          mkdir -p $HOME/termuxfs/aarch64 && cd $HOME/termuxfs/aarch64
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/GameNative/termux-on-gha/releases/download/build-20260218/termuxfs-aarch64.tar
+          tar -xf termuxfs-aarch64.tar
+
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/Android/Sdk/ndk/27.3.13750724
+          key: android-ndk-r27d
+
+      - name: Set up Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME/Android/Sdk/ndk && cd $HOME/Android/Sdk/ndk
+          wget --tries=5 --retry-connrefused --waitretry=10 https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          unzip -q android-ndk-r27d-linux.zip
+          mv android-ndk-r27d 27.3.13750724
+
+      - name: Cache LLVM MinGW toolchain
+        id: cache-llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchains/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64
+          key: bylaws-llvm-mingw-20250920
+
+      - name: Set up LLVM MinGW toolchain
+        if: steps.cache-llvm-mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME/toolchains && cd $HOME/toolchains
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
+          tar -xf llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
+
+      - name: Check out ntsync-android (userspace ntsync)
+        uses: actions/checkout@v4
+        with:
+          repository: GameNative/ntsync-android
+          ref: ${{ env.NTSYNC_ANDROID_REF }}
+          path: ntsync-android
+
+      - name: Set up Rust for ntsync-android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Autogen
+        working-directory: src
+        run: bash build-scripts/build-step0-autogen.sh
+
+      - name: Cache wine-tools
+        id: cache-wine-tools
+        uses: actions/cache@v4
+        with:
+          path: src/wine-tools
+          key: wine-tools-cachyos11-${{ hashFiles('src/configure.ac', 'src/configure', 'src/server/protocol.def') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-cachyos11-ntsync-${{ github.sha }}
+          restore-keys: |
+            ccache-cachyos11-ntsync-
+            ccache-p11-aarch64-28-
+
+      - name: Build wine-tools (step 0)
+        if: steps.cache-wine-tools.outputs.cache-hit != 'true'
+        working-directory: src
+        run: bash build-scripts/build-step0.sh
+
+      - name: Build sysvshm library
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --build-sysvshm
+
+      - name: Build ntsync-android library
+        working-directory: src
+        env:
+          NTSYNC_ANDROID_DIR: ${{ github.workspace }}/ntsync-android
+        run: bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
+
+      - name: Configure
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --configure
+
+      - name: Build
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --build
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Install
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --install
+
+      - name: Verify layer binaries
+        working-directory: src
+        run: |
+          python3 build-scripts/verify-layer.py "$OUTPUT_DIR" --arch aarch64 --api 28 --pages 16k
+          # userspace ntsync must be in wineserver (the string survives llvm-strip)
+          grep -q 'using userspace ntsync' "$OUTPUT_DIR/bin/wineserver" || { echo "FATAL: wineserver lacks userspace ntsync"; exit 1; }
+          echo "wineserver carries userspace ntsync."
+
+      - name: Download prefixPack.txz
+        run: |
+          # Pinned and sha256-checked, as in The412Banner's workflow for this tree.
+          PIN=6286ac456e4a8376e053ce1ce4f565bd37cc4af4
+          NAME=prefixPack-arm64ec-11.txz
+          SHA=ade99dc80b17086a269c038c9bc50167902103a9a61df763cba4d613543ff12a
+          wget --tries=5 --retry-connrefused --waitretry=10 "https://raw.githubusercontent.com/GameNative/bionic-prefix-files/$PIN/$NAME" -O $GITHUB_WORKSPACE/prefixPack.txz
+          echo "$SHA  $GITHUB_WORKSPACE/prefixPack.txz" | sha256sum -c -
+
+      - name: Generate profile.json files
+        run: |
+          # Same versionName as The412Banner's build of this tree; versionCode 2
+          # gives it its own install slot so both can be installed side by side.
+          DESC="proton-cachyos 11.0-20260703 arm64ec (bionic) + userspace ntsync (ntsync-android). Base: The412Banner Proton-CachyOS 11 Android port. Needs a fresh arm64ec container."
+          cat > $GITHUB_WORKSPACE/profile.json << EOF
+          {
+            "type": "Proton",
+            "versionName": "11.0-20260703-arm64ec",
+            "versionCode": 2,
+            "description": "${DESC}",
+            "files": [],
+            "wine": {
+              "binPath": "bin",
+              "libPath": "lib",
+              "prefixPack": "prefixPack.txz"
+            }
+          }
+          EOF
+          cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
+          {
+            "type": "Wine",
+            "versionName": "11.0-20260703-arm64ec",
+            "versionCode": 1,
+            "description": "${DESC}",
+            "files": [],
+            "wine": {
+              "binPath": "bin",
+              "libPath": "lib",
+              "prefixPack": "prefixPack.txz"
+            }
+          }
+          EOF
+
+      - name: Package build artifacts
+        run: |
+          cd $OUTPUT_DIR
+          cp $GITHUB_WORKSPACE/prefixPack.txz .
+          cp $GITHUB_WORKSPACE/profile.json .
+          # DirectAudio marker, as The412Banner's workflow writes for this tree
+          printf 'wine11 1.3.2' > lib/wine/aarch64-unix/.directaudio_bundled
+          tar -I 'zstd -T0 -19' -cf $GITHUB_WORKSPACE/proton-cachyos-11.0-ntsync-arm64ec.wcp bin lib share prefixPack.txz profile.json
+          cp $GITHUB_WORKSPACE/profile-wine.json profile.json
+          tar cJf $GITHUB_WORKSPACE/proton-cachyos-wine-11.0-ntsync-arm64ec.wcp.xz bin lib share prefixPack.txz profile.json
+          ls -lah $GITHUB_WORKSPACE/*.wcp $GITHUB_WORKSPACE/*.wcp.xz
+
+      - name: Upload Proton build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-cachyos-11-ntsync-wcp
+          path: proton-cachyos-11.0-ntsync-arm64ec.wcp
+          retention-days: 30
+
+      - name: Upload Wine build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-cachyos-11-ntsync-wcp-xz
+          path: proton-cachyos-wine-11.0-ntsync-arm64ec.wcp.xz
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    # Pushes only build and upload artifacts; publishing a prerelease is a
+    # deliberate step: Actions -> this workflow -> Run workflow.
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name '*.wcp' -exec cp {} release/ \;
+          find artifacts -name '*.wcp.xz' -exec cp {} release/ \;
+          ls -lah release/
+          [ "$(ls release | wc -l)" = 2 ] || { echo "expected 2 release files"; exit 1; }
+
+      - name: Assemble tag and notes
+        id: tag
+        run: |
+          echo "tag_name=proton-cachyos-11.0-ntsync-$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          cp .github/release-notes/cachyos-11-ntsync-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built from \`${{ github.sha }}\`: The412Banner/proton-wine \`${BASE_SHA:0:9}\` + \`cachyos-ntsync/p11\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+          } >> release-body.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          name: proton-cachyos 11 + userspace ntsync arm64ec (${{ steps.tag.outputs.tag_name }})
+          files: release/*
+          prerelease: true
+          body_path: release-body.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
