@@ -32,6 +32,14 @@ esync and fsync switch off automatically in wineserver and every process while n
 
 `versionName` is `10.0-20260426-arm64ec`.
 
+## Testing
+
+The same source (without the Android-only patches) was built natively for x86_64 Linux without `/dev/ntsync`, so the userspace backend was in use, with fsync off as on Android:
+
+- Wine's `ntdll` and `kernel32` tests for `sync`, `thread`, `process` and `om` give the same results with userspace ntsync as with server-side synchronization; the `sync` tests also with `WINEESYNC=1`.
+- A focused test (events, semaphores, mutexes, wait-all, message-queue waits, alertable APCs, named objects across processes, `WAIT_ABANDONED` after the owner exits) passes.
+- Event ping-pong: 38 µs per round trip with userspace ntsync, 42 µs with esync, 63 µs with server-side synchronization.
+
 ## Known limitations
 
 - Not tested on an Android device. The ARM64EC layer comes from CachyOS rather than GameNative's patches, which makes this build the riskier of the two. If a game misbehaves, compare with `PROTON_NO_NTSYNC=1` first, then with the GE-Proton 10.0-34 ntsync build.
