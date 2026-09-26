@@ -9,6 +9,11 @@ name: Build GE-Proton 10.0-34 + userspace ntsync (arm64ec)
 on:
   push:
     branches: [ claude/proton-10-ntsync-compile-20dq12 ]
+    # the proton-cachyos series live on this branch too and have their own workflows
+    paths-ignore:
+      - 'cachyos-ntsync/**'
+      - '.github/workflows/build-cachyos1*-ntsync.yml'
+      - '.github/release-notes/cachyos-*'
   workflow_dispatch:
 
 env:
