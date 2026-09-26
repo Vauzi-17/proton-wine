@@ -1,0 +1,27 @@
+From f33d707ffe57d6541c24743397cabc70ec7a3883 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 11:35:34 +0000
+Subject: [PATCH 11/15] include: Fix ListView_DeleteColumn.
+
+LVM_DELETECOLUMN takes the column in wParam; the macro passed it in
+lParam, so any use of it deleted the first column.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ include/commctrl.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/commctrl.h b/include/commctrl.h
+index 5a67c1284..a0c8dcd8d 100644
+--- a/include/commctrl.h
++++ b/include/commctrl.h
+@@ -3952,7 +3952,7 @@ typedef struct tagLVITEMINDEX
+ #define ListView_SetTextColor(hwnd,clrBk) \
+     (BOOL)SNDMSG((hwnd),LVM_SETTEXTCOLOR,0,(LPARAM)(COLORREF)(clrBk))
+ #define ListView_DeleteColumn(hwnd,col)\
+-    (LRESULT)SNDMSG((hwnd),LVM_DELETECOLUMN,0,(LPARAM)(INT)(col))
++    (BOOL)SNDMSG((hwnd),LVM_DELETECOLUMN,(WPARAM)(INT)(col),0)
+ #define ListView_GetColumnA(hwnd,x,col)\
+     (LRESULT)SNDMSGA((hwnd),LVM_GETCOLUMNA,(WPARAM)(INT)(x),(LPARAM)(LPLVCOLUMNA)(col))
+ #define ListView_GetColumnW(hwnd,x,col)\

@@ -1,8 +1,9 @@
 # Material 3 desktop: generated files
 
 `cachyos-ntsync/p11/0003-*.patch` adds a Material 3 style to the explorer
-desktop and `0009-*.patch` the Material 3 visual style for programs. Their
-generated inputs come from here.
+desktop, `0009-*.patch` the Material 3 visual style for programs and
+`0013-*.patch` Files, a Material 3 file manager. Their generated inputs come
+from here.
 
 ## Color schemes (`programs/explorer/material.c`)
 
@@ -30,7 +31,8 @@ python3 mkfonts.py
 ```
 
 This writes `wine_m3_symbols.ttf` and `wine_m3_symbols_filled.ttf` (the
-symbols listed in the script, instanced at FILL 0 and 1, renamed) and
+symbols listed in the script, instanced at FILL 0 and 1, renamed),
+`files_symbols.ttf` and `files_symbols_filled.ttf` (the same for Files) and
 `roboto_regular.ttf` and `roboto_medium.ttf` (Debian's `fonts-roboto-unhinted`,
 subset to Latin, Greek and Cyrillic). Licenses: `programs/explorer/material_fonts.txt`.
 
@@ -50,3 +52,28 @@ The images use eight key colors, the corners of the RGB cube; the
 uxtheme recolors the images when it loads them (`p11/0008`). `--check`
 compares every recolored image with the same image drawn in the scheme's
 colors. `m3.rc.in` is the head of `m3.rc`.
+
+## Icons
+
+```sh
+python3 mkshellicons.py symbols.ttf symbols.codepoints programs/explorer   # m3_*.ico
+python3 mkfilesicon.py files_symbols_filled.ttf programs/files/files.ico
+```
+
+The folder, drive, computer and documents icons the Material 3 style gives the
+shell (`p11/0014`), and the icon of Files; Pillow and fontTools.
+
+## Files as wfm.exe
+
+Files (`programs/files`, `p11/0013`) is Winlator File Manager (wfm, MIT,
+https://github.com/brunodev85/wfm) with a Material 3 interface. The Proton build
+has it as `files.exe`; the launcher's Files tile opens it. To use it in place of
+Winlator's file manager, build it on its own and replace
+`C:\windows\system32\wfm.exe` in the container (keep the old one):
+
+```sh
+build-wfm.sh /path/to/patched/wine x86_64 wfm.exe    # or arm64ec
+```
+
+Needs llvm-mingw. It follows the colors of the Material 3 desktop and uses the
+Roboto it installs; elsewhere it falls back to the message font.

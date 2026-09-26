@@ -9,9 +9,11 @@ commit, `git am` the series, and build with that tree's own scripts.
 | Proton 11 | [The412Banner/proton-wine](https://github.com/The412Banner/proton-wine) `1233149d` (their Android port of proton-cachyos 11) | `p11/` | `build-cachyos11-ntsync.yml` |
 | Proton 10 | [CachyOS/wine-cachyos](https://github.com/CachyOS/wine-cachyos) `603c2335` (`cachyos_10.0_20260426/main`) | `p10/` | `build-cachyos10-ntsync.yml` |
 
-`p11/0003` to `0010` add a Material 3 style to the Wine desktop and to
-programs (system colors, title bars, and the `m3.msstyles` visual style); the
-color tables, fonts and theme images come from the scripts in `m3-tools/`.
+`p11/0003` to `0015` add a Material 3 style to the Wine desktop and to
+programs (system colors, title bars, menus, fonts, icons, the `m3.msstyles`
+visual style) and Files, a Material 3 file manager based on Winlator's wfm; the
+color tables, fonts, icons and theme images come from the scripts in
+`m3-tools/`, which also builds Files as a standalone `wfm.exe`.
 
 A push that changes a series builds it and uploads the `.wcp`/`.wcp.xz` as
 workflow artifacts. Publishing a prerelease is manual: Actions, pick the
