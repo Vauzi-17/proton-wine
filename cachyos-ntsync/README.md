@@ -9,6 +9,9 @@ commit, `git am` the series, and build with that tree's own scripts.
 | Proton 11 | [The412Banner/proton-wine](https://github.com/The412Banner/proton-wine) `1233149d` (their Android port of proton-cachyos 11) | `p11/` | `build-cachyos11-ntsync.yml` |
 | Proton 10 | [CachyOS/wine-cachyos](https://github.com/CachyOS/wine-cachyos) `603c2335` (`cachyos_10.0_20260426/main`) | `p10/` | `build-cachyos10-ntsync.yml` |
 
+`p11/0003` adds a Material 3 style to the Wine desktop; its color tables and
+fonts come from the scripts in `m3-tools/`.
+
 A push that changes a series builds it and uploads the `.wcp`/`.wcp.xz` as
 workflow artifacts. Publishing a prerelease is manual: Actions, pick the
 workflow, Run workflow.
