@@ -1,7 +1,8 @@
 # Material 3 desktop: generated files
 
 `cachyos-ntsync/p11/0003-*.patch` adds a Material 3 style to the explorer
-desktop. Two of its inputs are generated here.
+desktop and `0009-*.patch` the Material 3 visual style for programs. Their
+generated inputs come from here.
 
 ## Color schemes (`programs/explorer/material.c`)
 
@@ -32,3 +33,20 @@ This writes `wine_m3_symbols.ttf` and `wine_m3_symbols_filled.ttf` (the
 symbols listed in the script, instanced at FILL 0 and 1, renamed) and
 `roboto_regular.ttf` and `roboto_medium.ttf` (Debian's `fonts-roboto-unhinted`,
 subset to Latin, Greek and Cyrillic). Licenses: `programs/explorer/material_fonts.txt`.
+
+## Visual style (`dlls/m3.msstyles`)
+
+```sh
+pip install pillow numpy   # and rsvg-convert (librsvg2-bin)
+python3 mkmsstyles.py /path/to/wine [--check]
+```
+
+Writes `dlls/m3.msstyles/` (`Makefile.in`, `m3.rc`, `m3_*.bmp`) from the tree's
+`dlls/light.msstyles`: the Material 3 controls drawn by the script, the other
+images of the light theme with their colors mapped to Material 3 roles, and one
+ini per color scheme (the six accents of `palettes.json` in light and dark).
+The images use eight key colors, the corners of the RGB cube; the
+`[WineRecolor]` section of each scheme maps them to the scheme's colors, and
+uxtheme recolors the images when it loads them (`p11/0008`). `--check`
+compares every recolored image with the same image drawn in the scheme's
+colors. `m3.rc.in` is the head of `m3.rc`.

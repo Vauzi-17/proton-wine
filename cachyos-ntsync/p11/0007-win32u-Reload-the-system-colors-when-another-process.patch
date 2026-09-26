@@ -1,0 +1,87 @@
+From 59e814e240798aba19940b42875ad16e61bfa949 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 09:49:58 +0000
+Subject: [PATCH 07/10] win32u: Reload the system colors when another process
+ changes them.
+
+Each process caches the system colors, so the colors set with
+SetSysColors() by another process, as the explorer desktop does for
+its styles, only reached new processes. Running programs now reload
+them on WM_SYSCOLORCHANGE, dropping the brushes and pens of the colors
+that changed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ dlls/win32u/defwnd.c         |  5 +++++
+ dlls/win32u/sysparams.c      | 28 ++++++++++++++++++++++++++++
+ dlls/win32u/win32u_private.h |  1 +
+ 3 files changed, 34 insertions(+)
+
+diff --git a/dlls/win32u/defwnd.c b/dlls/win32u/defwnd.c
+index 2934ef17e..2d963d26a 100644
+--- a/dlls/win32u/defwnd.c
++++ b/dlls/win32u/defwnd.c
+@@ -3602,6 +3602,11 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+     case WM_CTLCOLOR:
+         return (LRESULT)handle_control_color( (HDC)wparam, HIWORD( lparam ));
+ 
++    case WM_SYSCOLORCHANGE:
++        /* the colors are cached in each process, pick up the ones set by another process */
++        reload_sys_colors();
++        break;
++
+     case WM_SYSCOMMAND:
+         result = handle_sys_command( hwnd, wparam, lparam );
+         break;
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+index 07821fcad..f9ab04a46 100644
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -7713,6 +7713,34 @@ HBRUSH get_55aa_brush(void)
+     return brush_55aa;
+ }
+ 
++/* reload the system colors, after another process changed them */
++void reload_sys_colors(void)
++{
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE( system_colors ); i++)
++    {
++        struct sysparam_rgb_entry *entry = &system_colors[i];
++        COLORREF old = entry->val, color;
++        HBRUSH brush;
++        HPEN pen;
++
++        entry->hdr.loaded = FALSE;
++        get_entry( entry, 0, &color );
++        if (color == old) continue;
++        if ((brush = InterlockedExchangePointer( (void **)&entry->brush, 0 )))
++        {
++            make_gdi_object_system( brush, FALSE );
++            NtGdiDeleteObjectApp( brush );
++        }
++        if ((pen = InterlockedExchangePointer( (void **)&entry->pen, 0 )))
++        {
++            make_gdi_object_system( pen, FALSE );
++            NtGdiDeleteObjectApp( pen );
++        }
++    }
++}
++
+ HBRUSH get_sys_color_brush( unsigned int index )
+ {
+     if (index == COLOR_55AA_BRUSH) return get_55aa_brush();
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index 58ee7b1ed..8a6acd667 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -170,6 +170,7 @@ extern RECT get_primary_monitor_rect( UINT dpi );
+ extern DWORD get_process_layout(void);
+ extern COLORREF get_sys_color( int index );
+ extern HBRUSH get_sys_color_brush( unsigned int index );
++extern void reload_sys_colors(void);
+ extern HPEN get_sys_color_pen( unsigned int index );
+ extern UINT get_system_dpi(void);
+ extern BOOL get_font_smoothing_aa( UINT *font_aa, UINT *subpixel_orientation_aa );
