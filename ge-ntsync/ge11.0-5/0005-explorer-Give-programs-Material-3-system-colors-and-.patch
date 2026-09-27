@@ -1,7 +1,7 @@
 From 9319840900dd18157e25be456e4d06152b67dae2 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:11:41 +0000
-Subject: [PATCH 05/18] explorer: Give programs Material 3 system colors and
+Subject: [PATCH 05/19] explorer: Give programs Material 3 system colors and
  fonts.
 
 The Material 3 style sets the system colors from the selected scheme,

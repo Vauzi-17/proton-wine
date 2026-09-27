@@ -1,7 +1,7 @@
 From 9c0442a9e4cf22d26d8c9114cde702720e890e2c Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:49:58 +0000
-Subject: [PATCH 07/18] win32u: Reload the system colors when another process
+Subject: [PATCH 07/19] win32u: Reload the system colors when another process
  changes them.
 
 Each process caches the system colors, so the colors set with

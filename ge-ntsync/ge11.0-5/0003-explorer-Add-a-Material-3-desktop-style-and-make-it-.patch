@@ -1,7 +1,7 @@
 From 26c5f8754c621746211809e4fcd07a69ac517722 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 08:15:42 +0000
-Subject: [PATCH 03/18] explorer: Add a Material 3 desktop style and make it
+Subject: [PATCH 03/19] explorer: Add a Material 3 desktop style and make it
  the default.
 
 The hand painted taskbar gets a Material 3 look next to the Luna one: a

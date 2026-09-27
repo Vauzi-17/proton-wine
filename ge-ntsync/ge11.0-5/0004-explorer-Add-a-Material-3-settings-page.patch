@@ -1,7 +1,7 @@
 From 5246f7d5c84acfbbbc3da001ae6fff0089f7a937 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 08:23:27 +0000
-Subject: [PATCH 04/18] explorer: Add a Material 3 settings page.
+Subject: [PATCH 04/19] explorer: Add a Material 3 settings page.
 
 Display Properties of the Material 3 style: a frameless page with a top
 app bar, a preview, segmented buttons for the style, the brightness and

@@ -1,7 +1,7 @@
 From c56c29e01a4ba953e95b7b97870bfc2b2927a33d Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:53:13 +0000
-Subject: [PATCH 02/18] explorer: Bring The412Banner's XP desktop to GE-Proton
+Subject: [PATCH 02/19] explorer: Bring The412Banner's XP desktop to GE-Proton
  11.0-5.
 
 The XP taskbar, start menu and systray, the XP window frames in win32u,

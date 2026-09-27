@@ -1,7 +1,7 @@
 From f0dd94b9b3caeafca540c839e71a171802c9cf3e Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:11:41 +0000
-Subject: [PATCH 06/18] win32u: Add Material 3 window frames.
+Subject: [PATCH 06/19] win32u: Add Material 3 window frames.
 
 With the Material 3 desktop style, non-client areas are painted as a
 flat title bar in the scheme's surface colors, with the title in Roboto

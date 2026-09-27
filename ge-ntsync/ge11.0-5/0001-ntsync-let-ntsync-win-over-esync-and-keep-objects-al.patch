@@ -1,7 +1,7 @@
 From 654c31a84b2ae2dfc33dfa80f7d45b10f594a973 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:52:24 +0000
-Subject: [PATCH 01/18] ntsync: let ntsync win over esync, and keep objects
+Subject: [PATCH 01/19] ntsync: let ntsync win over esync, and keep objects
  alive while in use.
 
 The GE-Proton 11.0-5 ntsync build hung at a black desktop with esync on

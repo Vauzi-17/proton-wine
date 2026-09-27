@@ -1,7 +1,7 @@
 From cc06be4126496305298d60c911705055b29fdd3e Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:49:58 +0000
-Subject: [PATCH 08/18] uxtheme: Recolor theme images from key colors.
+Subject: [PATCH 08/19] uxtheme: Recolor theme images from key colors.
 
 Wine extension for themes with many color schemes: the [WineRecolor]
 section of a scheme's ini maps key colors to the scheme's colors, and

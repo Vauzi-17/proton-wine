@@ -1,0 +1,255 @@
+From 78d46676558ea43e98ab0c2b42be070b6a057d3b Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 13:19:28 +0000
+Subject: [PATCH 18/19] uxtheme: Let a theme shrink image corners instead of
+ cutting them.
+
+An image drawn smaller than its sizing margins keeps its corners at full
+size and cut. A theme with ScaleCorners = true in a [WineSizing] section
+now gets its corners shrunk evenly, so round corners stay round on low
+controls. Themes without it draw as before.
+---
+ dlls/uxtheme/draw.c     | 88 +++++++++++++++++++++++++----------------
+ dlls/uxtheme/msstyles.c | 24 +++++++++++
+ dlls/uxtheme/msstyles.h |  4 ++
+ 3 files changed, 83 insertions(+), 33 deletions(-)
+
+diff --git a/dlls/uxtheme/draw.c b/dlls/uxtheme/draw.c
+index 91406407e..a3e13b8fa 100644
+--- a/dlls/uxtheme/draw.c
++++ b/dlls/uxtheme/draw.c
+@@ -809,24 +809,43 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+     }
+     else {
+         HDC hdcDst = NULL;
+-        MARGINS sm;
++        MARGINS sm, ssm;
+         POINT org;
+ 
+         dstSize.x = abs(dstSize.x);
+         dstSize.y = abs(dstSize.y);
+ 
+         GetThemeMargins(hTheme, hdc, iPartId, iStateId, TMT_SIZINGMARGINS, NULL, &sm);
++        /* sm are the margins in the destination, ssm the ones in the image */
++        ssm = sm;
+ 
+         /* Resize sizing margins if destination is smaller */
+         if (sm.cyTopHeight + sm.cyBottomHeight > dstSize.y || sm.cxLeftWidth + sm.cxRightWidth > dstSize.x) {
+-            if (sm.cyTopHeight + sm.cyBottomHeight > dstSize.y) {
+-                sm.cyTopHeight = MulDiv(sm.cyTopHeight, dstSize.y, srcSize.y);
+-                sm.cyBottomHeight = dstSize.y - sm.cyTopHeight;
++            if (MSSTYLES_ScaleCorners(hTheme)) {
++                /* Wine extension: shrink the corners evenly, so that round corners stay round */
++                int num = dstSize.y, den = sm.cyTopHeight + sm.cyBottomHeight;
++
++                if (!den || (LONGLONG)dstSize.x * den < (LONGLONG)num * (sm.cxLeftWidth + sm.cxRightWidth)) {
++                    num = dstSize.x;
++                    den = sm.cxLeftWidth + sm.cxRightWidth;
++                }
++                sm.cxLeftWidth = MulDiv(ssm.cxLeftWidth, num, den);
++                sm.cxRightWidth = min(MulDiv(ssm.cxRightWidth, num, den), dstSize.x - sm.cxLeftWidth);
++                sm.cyTopHeight = MulDiv(ssm.cyTopHeight, num, den);
++                sm.cyBottomHeight = min(MulDiv(ssm.cyBottomHeight, num, den), dstSize.y - sm.cyTopHeight);
+             }
++            else {
++                if (sm.cyTopHeight + sm.cyBottomHeight > dstSize.y) {
++                    sm.cyTopHeight = MulDiv(sm.cyTopHeight, dstSize.y, srcSize.y);
++                    sm.cyBottomHeight = dstSize.y - sm.cyTopHeight;
++                }
+ 
+-            if (sm.cxLeftWidth + sm.cxRightWidth > dstSize.x) {
+-                sm.cxLeftWidth = MulDiv(sm.cxLeftWidth, dstSize.x, srcSize.x);
+-                sm.cxRightWidth = dstSize.x - sm.cxLeftWidth;
++                if (sm.cxLeftWidth + sm.cxRightWidth > dstSize.x) {
++                    sm.cxLeftWidth = MulDiv(sm.cxLeftWidth, dstSize.x, srcSize.x);
++                    sm.cxRightWidth = dstSize.x - sm.cxLeftWidth;
++                }
++                /* the corners are cut, not scaled */
++                ssm = sm;
+             }
+         }
+ 
+@@ -834,48 +853,51 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+         OffsetViewportOrgEx(hdcDst, rcDst.left, rcDst.top, &org);
+ 
+         /* Upper left corner */
+-        if(!UXTHEME_Blt(hdcDst, 0, 0, sm.cxLeftWidth, sm.cyTopHeight,
+-                        hdcSrc, rcSrc.left, rcSrc.top, 
+-                        transparent, transparentcolor)) {
++        if(!UXTHEME_StretchBlt(hdcDst, 0, 0, sm.cxLeftWidth, sm.cyTopHeight,
++                               hdcSrc, rcSrc.left, rcSrc.top, ssm.cxLeftWidth, ssm.cyTopHeight,
++                               transparent, transparentcolor)) {
+             hr = HRESULT_FROM_WIN32(GetLastError());
+             goto draw_error; 
+         }
+         /* Upper right corner */
+-        if(!UXTHEME_Blt (hdcDst, dstSize.x-sm.cxRightWidth, 0, 
+-                         sm.cxRightWidth, sm.cyTopHeight,
+-                         hdcSrc, rcSrc.right-sm.cxRightWidth, rcSrc.top, 
+-                         transparent, transparentcolor)) {
++        if(!UXTHEME_StretchBlt(hdcDst, dstSize.x-sm.cxRightWidth, 0,
++                               sm.cxRightWidth, sm.cyTopHeight,
++                               hdcSrc, rcSrc.right-ssm.cxRightWidth, rcSrc.top,
++                               ssm.cxRightWidth, ssm.cyTopHeight,
++                               transparent, transparentcolor)) {
+             hr = HRESULT_FROM_WIN32(GetLastError());
+             goto draw_error; 
+         }
+         /* Lower left corner */
+-        if(!UXTHEME_Blt (hdcDst, 0, dstSize.y-sm.cyBottomHeight, 
+-                         sm.cxLeftWidth, sm.cyBottomHeight,
+-                         hdcSrc, rcSrc.left, rcSrc.bottom-sm.cyBottomHeight, 
+-                         transparent, transparentcolor)) {
++        if(!UXTHEME_StretchBlt(hdcDst, 0, dstSize.y-sm.cyBottomHeight,
++                               sm.cxLeftWidth, sm.cyBottomHeight,
++                               hdcSrc, rcSrc.left, rcSrc.bottom-ssm.cyBottomHeight,
++                               ssm.cxLeftWidth, ssm.cyBottomHeight,
++                               transparent, transparentcolor)) {
+             hr = HRESULT_FROM_WIN32(GetLastError());
+             goto draw_error; 
+         }
+         /* Lower right corner */
+-        if(!UXTHEME_Blt (hdcDst, dstSize.x-sm.cxRightWidth, dstSize.y-sm.cyBottomHeight, 
+-                         sm.cxRightWidth, sm.cyBottomHeight,
+-                         hdcSrc, rcSrc.right-sm.cxRightWidth, rcSrc.bottom-sm.cyBottomHeight, 
+-                         transparent, transparentcolor)) {
++        if(!UXTHEME_StretchBlt(hdcDst, dstSize.x-sm.cxRightWidth, dstSize.y-sm.cyBottomHeight,
++                               sm.cxRightWidth, sm.cyBottomHeight,
++                               hdcSrc, rcSrc.right-ssm.cxRightWidth, rcSrc.bottom-ssm.cyBottomHeight,
++                               ssm.cxRightWidth, ssm.cyBottomHeight,
++                               transparent, transparentcolor)) {
+             hr = HRESULT_FROM_WIN32(GetLastError());
+             goto draw_error; 
+         }
+ 
+         destCenterWidth  = dstSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
+-        srcCenterWidth   = srcSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
++        srcCenterWidth   = srcSize.x - (ssm.cxLeftWidth + ssm.cxRightWidth);
+         destCenterHeight = dstSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
+-        srcCenterHeight  = srcSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
++        srcCenterHeight  = srcSize.y - (ssm.cyTopHeight + ssm.cyBottomHeight);
+ 
+         if(destCenterWidth > 0) {
+             /* Center top */
+             if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, 0,
+                                   destCenterWidth, sm.cyTopHeight,
+-                                  hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top,
+-                                  srcCenterWidth, sm.cyTopHeight,
++                                  hdcSrc, rcSrc.left+ssm.cxLeftWidth, rcSrc.top,
++                                  srcCenterWidth, ssm.cyTopHeight,
+                                   sizingtype, transparent, transparentcolor)) {
+                 hr = HRESULT_FROM_WIN32(GetLastError());
+                 goto draw_error;
+@@ -883,8 +905,8 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+             /* Center bottom */
+             if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, dstSize.y-sm.cyBottomHeight,
+                                   destCenterWidth, sm.cyBottomHeight,
+-                                  hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.bottom-sm.cyBottomHeight,
+-                                  srcCenterWidth, sm.cyBottomHeight,
++                                  hdcSrc, rcSrc.left+ssm.cxLeftWidth, rcSrc.bottom-ssm.cyBottomHeight,
++                                  srcCenterWidth, ssm.cyBottomHeight,
+                                   sizingtype, transparent, transparentcolor)) {
+                 hr = HRESULT_FROM_WIN32(GetLastError());
+                 goto draw_error;
+@@ -894,8 +916,8 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+             /* Left center */
+             if(!UXTHEME_SizedBlt (hdcDst, 0, sm.cyTopHeight,
+                                   sm.cxLeftWidth, destCenterHeight,
+-                                  hdcSrc, rcSrc.left, rcSrc.top+sm.cyTopHeight,
+-                                  sm.cxLeftWidth, srcCenterHeight,
++                                  hdcSrc, rcSrc.left, rcSrc.top+ssm.cyTopHeight,
++                                  ssm.cxLeftWidth, srcCenterHeight,
+                                   sizingtype,
+                                   transparent, transparentcolor)) {
+                 hr = HRESULT_FROM_WIN32(GetLastError());
+@@ -904,8 +926,8 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+             /* Right center */
+             if(!UXTHEME_SizedBlt (hdcDst, dstSize.x-sm.cxRightWidth, sm.cyTopHeight,
+                                   sm.cxRightWidth, destCenterHeight,
+-                                  hdcSrc, rcSrc.right-sm.cxRightWidth, rcSrc.top+sm.cyTopHeight,
+-                                  sm.cxRightWidth, srcCenterHeight,
++                                  hdcSrc, rcSrc.right-ssm.cxRightWidth, rcSrc.top+ssm.cyTopHeight,
++                                  ssm.cxRightWidth, srcCenterHeight,
+                                   sizingtype, transparent, transparentcolor)) {
+                 hr = HRESULT_FROM_WIN32(GetLastError());
+                 goto draw_error;
+@@ -918,7 +940,7 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
+                 /* Center */
+                 if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, sm.cyTopHeight,
+                                       destCenterWidth, destCenterHeight,
+-                                      hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top+sm.cyTopHeight,
++                                      hdcSrc, rcSrc.left+ssm.cxLeftWidth, rcSrc.top+ssm.cyTopHeight,
+                                       srcCenterWidth, srcCenterHeight,
+                                       sizingtype, transparent, transparentcolor)) {
+                     hr = HRESULT_FROM_WIN32(GetLastError());
+diff --git a/dlls/uxtheme/msstyles.c b/dlls/uxtheme/msstyles.c
+index 7ad79f3f5..b1ff99a4c 100644
+--- a/dlls/uxtheme/msstyles.c
++++ b/dlls/uxtheme/msstyles.c
+@@ -254,6 +254,14 @@ PUXINI_FILE MSSTYLES_GetThemeIni(PTHEME_FILE tf)
+     return UXINI_LoadINI(tf->hTheme, L"themes_ini");
+ }
+ 
++/***********************************************************************
++ *      MSSTYLES_ScaleCorners
++ */
++BOOL MSSTYLES_ScaleCorners(PTHEME_CLASS tc)
++{
++    return tc->tf->scale_corners;
++}
++
+ /***********************************************************************
+  *      MSSTYLES_GetThemeDPI
+  *
+@@ -919,6 +927,18 @@ static void parse_recolors(PTHEME_FILE tf, PUXINI_FILE ini)
+     }
+ }
+ 
++static void parse_sizing(PTHEME_FILE tf, PUXINI_FILE ini)
++{
++    LPCWSTR lpName, lpValue;
++    DWORD dwLen, dwValueLen;
++
++    while((lpName=UXINI_GetNextValue(ini, &dwLen, &lpValue, &dwValueLen))) {
++        if(CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE, lpName, dwLen, L"ScaleCorners", -1) == CSTR_EQUAL)
++            tf->scale_corners = CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE, lpValue, dwValueLen,
++                                               L"true", -1) == CSTR_EQUAL;
++    }
++}
++
+ /***********************************************************************
+  *      MSSTYLES_ParseThemeIni
+  *
+@@ -1002,6 +1022,10 @@ static void MSSTYLES_ParseThemeIni(PTHEME_FILE tf, BOOL setMetrics)
+             parse_recolors(tf, ini);
+             continue;
+         }
++        if(CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE, lpName, dwLen, L"WineSizing", -1) == CSTR_EQUAL) {
++            parse_sizing(tf, ini);
++            continue;
++        }
+         if(MSSTYLES_ParseIniSectionName(lpName, dwLen, szAppName, szClassName, &iPartId, &iStateId)) {
+             BOOL isGlobal = FALSE;
+             if(!lstrcmpiW(szClassName, L"globals")) {
+diff --git a/dlls/uxtheme/msstyles.h b/dlls/uxtheme/msstyles.h
+index 9bde4d4f2..ae34dd341 100644
+--- a/dlls/uxtheme/msstyles.h
++++ b/dlls/uxtheme/msstyles.h
+@@ -98,6 +98,9 @@ typedef struct _THEME_FILE {
+ 
+     THEME_RECOLOR recolors[MAX_THEME_RECOLORS];
+     UINT recolor_count;
++    /* Wine extension: ScaleCorners in [WineSizing]. Images drawn smaller than their sizing
++     * margins have their corners shrunk evenly instead of cut, so round corners stay round. */
++    BOOL scale_corners;
+ } THEME_FILE, *PTHEME_FILE;
+ 
+ typedef struct _UXINI_FILE *PUXINI_FILE;
+@@ -112,6 +115,7 @@ BOOL MSSTYLES_LookupEnum(LPCWSTR pszValueName, int dwEnum, int *dwValue);
+ BOOL MSSTYLES_LookupPartState(LPCWSTR pszClass, LPCWSTR pszPart, LPCWSTR pszState, int *iPartId, int *iStateId);
+ PUXINI_FILE MSSTYLES_GetThemeIni(PTHEME_FILE tf);
+ UINT MSSTYLES_GetThemeDPI(PTHEME_CLASS tc);
++BOOL MSSTYLES_ScaleCorners(PTHEME_CLASS tc);
+ PTHEME_PARTSTATE MSSTYLES_FindPart(PTHEME_CLASS tc, int iPartId);
+ PTHEME_PARTSTATE MSSTYLES_FindPartState(PTHEME_CLASS tc, int iPartId, int iStateId, PTHEME_CLASS *tcNext);
+ PTHEME_PROPERTY MSSTYLES_FindProperty(PTHEME_CLASS tc, int iPartId, int iStateId, int iPropertyPrimitive, int iPropertyId);

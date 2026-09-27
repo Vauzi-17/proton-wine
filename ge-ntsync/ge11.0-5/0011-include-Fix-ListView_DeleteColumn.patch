@@ -1,7 +1,7 @@
 From 1b9bfce67479204c230c777d7e384085c16d1c7b Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 11:35:34 +0000
-Subject: [PATCH 11/18] include: Fix ListView_DeleteColumn.
+Subject: [PATCH 11/19] include: Fix ListView_DeleteColumn.
 
 LVM_DELETECOLUMN takes the column in wParam; the macro passed it in
 lParam, so any use of it deleted the first column.

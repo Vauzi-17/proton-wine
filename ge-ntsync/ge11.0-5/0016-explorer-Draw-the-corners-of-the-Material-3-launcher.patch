@@ -1,7 +1,7 @@
 From 44296e8ef59ec64879a852988f890cc2d7fa6d58 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 14:18:11 +0000
-Subject: [PATCH 16/18] explorer: Draw the corners of the Material 3 launcher
+Subject: [PATCH 16/19] explorer: Draw the corners of the Material 3 launcher
  without a window region.
 
 X servers without the shape extension ignore window regions and showed
