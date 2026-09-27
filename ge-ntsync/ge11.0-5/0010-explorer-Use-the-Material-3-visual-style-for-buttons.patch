@@ -1,0 +1,239 @@
+From ac92ee3fc78bff1ec7d29acd5884a7c293091f44 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 09:49:59 +0000
+Subject: [PATCH 10/18] explorer: Use the Material 3 visual style for buttons
+ and controls.
+
+The Material 3 desktop style points the theme settings at m3.msstyles
+with the scheme of its accent and brightness, like the XP style does
+with the XP visual style, and the classic style restores the theme used
+before. The settings page gets a switch for it. Windows are repainted
+after a theme change, as not all controls repaint by themselves.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ programs/explorer/explorer.rc  |  1 +
+ programs/explorer/m3settings.c |  5 ++-
+ programs/explorer/resource.h   |  1 +
+ programs/explorer/systray.c    | 81 +++++++++++++++++++++++-----------
+ 4 files changed, 60 insertions(+), 28 deletions(-)
+
+diff --git a/programs/explorer/explorer.rc b/programs/explorer/explorer.rc
+index 98249ca78..20bc03f56 100644
+--- a/programs/explorer/explorer.rc
++++ b/programs/explorer/explorer.rc
+@@ -97,6 +97,7 @@ STRINGTABLE
+     IDS_M3_DONE         "Done"
+     IDS_M3_CLASSIC_NOTE "The plain Wine taskbar and windows."
+     IDS_M3_APP_COLORS   "Material colors in programs"
++    IDS_M3_CONTROLS     "Material buttons and controls"
+ }
+ 
+ IDD_DISPLAY_PROPERTIES DIALOGEX 0, 0, 262, 306
+diff --git a/programs/explorer/m3settings.c b/programs/explorer/m3settings.c
+index a4f54d9fd..3ed79d865 100644
+--- a/programs/explorer/m3settings.c
++++ b/programs/explorer/m3settings.c
+@@ -141,7 +141,8 @@ static void layout(void)
+         for (i = 0; i < M3_MODES; i++) add_control( CTRL_MODE, i, left + i * seg, y + px( 28 ), seg, px( 40 ), TRUE );
+         y += px( 28 + 40 + 8 );
+         add_control( CTRL_APP_COLORS, 0, left, y, left_width, row, TRUE );
+-        y += row;
++        add_control( CTRL_XP_CONTROLS, 0, left, y + row, left_width, row, TRUE );
++        y += 2 * row;
+     }
+     else if (style == 1)
+     {
+@@ -411,7 +412,7 @@ static void paint_page( HDC hdc )
+             draw_switch_row( hdc, control, IDS_M3_XP_FRAMES, colors, hot );
+             break;
+         case CTRL_XP_CONTROLS:
+-            draw_switch_row( hdc, control, IDS_M3_XP_CONTROLS, colors, hot );
++            draw_switch_row( hdc, control, settings.m3 ? IDS_M3_CONTROLS : IDS_M3_XP_CONTROLS, colors, hot );
+             break;
+         case CTRL_CLOCK:
+             draw_switch_row( hdc, control, IDS_M3_SHOW_CLOCK, colors, hot );
+diff --git a/programs/explorer/resource.h b/programs/explorer/resource.h
+index 5980f80d2..ad8c41b72 100644
+--- a/programs/explorer/resource.h
++++ b/programs/explorer/resource.h
+@@ -92,6 +92,7 @@
+ #define IDS_M3_DONE 76
+ #define IDS_M3_CLASSIC_NOTE 77
+ #define IDS_M3_APP_COLORS 78
++#define IDS_M3_CONTROLS 79
+ 
+ #define IDI_WINE_LOGO 100
+ #define IDB_WALLPAPER_LIGHT 110
+diff --git a/programs/explorer/systray.c b/programs/explorer/systray.c
+index 6dea2217f..798a5f71e 100644
+--- a/programs/explorer/systray.c
++++ b/programs/explorer/systray.c
+@@ -2090,7 +2090,7 @@ static void xp_load_settings(void)
+ }
+ 
+ /*
+- * Wine XP visual style for buttons and controls (winexp.msstyles).
++ * Visual styles for buttons and controls: Wine XP (winexp.msstyles) and Material 3 (m3.msstyles).
+  *
+  * Only the theme settings in the registry are changed, the theme is never applied: applying it
+  * would also set the system colors and metrics, which belong to the desktop theme of the host.
+@@ -2098,21 +2098,35 @@ static void xp_load_settings(void)
+  * sent here. The theme in use before is saved, to be restored for the classic style.
+  */
+ 
++enum controls_theme
++{
++    CONTROLS_DEFAULT,  /* the theme used before */
++    CONTROLS_XP,
++    CONTROLS_M3,
++};
++
+ static const WCHAR theme_manager_key[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager";
+ static const WCHAR * const saved_theme_values[] = { L"ThemeActive", L"DllName", L"ColorName", L"SizeName" };
+ /* each scheme also comes in a variant for dark window colours, with lighter group box titles */
+ static const WCHAR * const xp_theme_colors[][2] = { { L"Blue", L"BlueDark" }, { L"Olive", L"OliveDark" },
+                                                    { L"Silver", L"SilverDark" } };
++/* the Material 3 colors, in light and dark, in the order of the accents */
++static const WCHAR * const m3_theme_colors[M3_ACCENTS] = { L"Purple", L"Blue", L"Teal", L"Green", L"Orange", L"Pink" };
++static const WCHAR * const theme_files[] = { NULL, L"winexp", L"m3" };
+ 
+-static BOOL get_xp_theme_path( WCHAR *path, DWORD size )
++static BOOL get_theme_path( enum controls_theme theme, WCHAR *path, DWORD size )
+ {
+-    static const WCHAR * const locations[] = { L"%SystemRoot%\\resources\\themes\\winexp\\winexp.msstyles",
+-                                               L"%SystemRoot%\\system32\\winexp.msstyles" };
++    static const WCHAR * const locations[] = { L"%%SystemRoot%%\\resources\\themes\\%s\\%s.msstyles",
++                                               L"%%SystemRoot%%\\system32\\%s.msstyles" };
++    WCHAR location[MAX_PATH];
+     unsigned int i;
+ 
+     for (i = 0; i < ARRAY_SIZE(locations); i++)
+     {
+-        DWORD len = ExpandEnvironmentStringsW( locations[i], path, size );
++        DWORD len;
++
++        swprintf( location, ARRAY_SIZE(location), locations[i], theme_files[theme], theme_files[theme] );
++        len = ExpandEnvironmentStringsW( location, path, size );
+         if (len && len <= size && GetFileAttributesW( path ) != INVALID_FILE_ATTRIBUTES) return TRUE;
+     }
+     return FALSE;
+@@ -2141,11 +2155,20 @@ static void copy_theme_value( HKEY from, HKEY to, const WCHAR *name )
+         RegDeleteValueW( to, name );
+ }
+ 
+-static BOOL is_xp_theme( const WCHAR *dll )
++/* whether dll is one of the themes set here */
++static BOOL is_own_theme( const WCHAR *dll )
+ {
+-    int len = lstrlenW( dll ), suffix = lstrlenW( L"\\winexp.msstyles" );
++    int len = lstrlenW( dll );
++    unsigned int i;
++
++    for (i = CONTROLS_XP; i < ARRAY_SIZE(theme_files); i++)
++    {
++        WCHAR name[32];
++        int suffix = swprintf( name, ARRAY_SIZE(name), L"\\%s.msstyles", theme_files[i] );
+ 
+-    return len >= suffix && !lstrcmpiW( dll + len - suffix, L"\\winexp.msstyles" );
++        if (len >= suffix && !lstrcmpiW( dll + len - suffix, name )) return TRUE;
++    }
++    return FALSE;
+ }
+ 
+ static BOOL CALLBACK post_theme_changed_child( HWND hwnd, LPARAM lparam )
+@@ -2158,13 +2181,15 @@ static BOOL CALLBACK post_theme_changed( HWND hwnd, LPARAM lparam )
+ {
+     PostMessageW( hwnd, WM_THEMECHANGED, 0, 0 );
+     EnumChildWindows( hwnd, post_theme_changed_child, 0 );
++    /* the window repaints after handling the posted messages; not all controls repaint by themselves */
++    if (IsWindowVisible( hwnd )) RedrawWindow( hwnd, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN );
+     return TRUE;
+ }
+ 
+-/* point the theme settings at the XP theme, or back at the theme used before */
+-static void apply_xp_controls( BOOL use_xp, UINT scheme )
++/* point the theme settings at the XP or Material 3 theme, or back at the theme used before */
++static void apply_controls_theme( enum controls_theme use, UINT scheme )
+ {
+-    WCHAR dll[MAX_PATH], color[64], value[MAX_PATH], xp_path[MAX_PATH];
++    WCHAR dll[MAX_PATH], color[64], value[MAX_PATH], path[MAX_PATH], wanted_color[64];
+     BOOL active, changed = FALSE;
+     HKEY theme, saved;
+     unsigned int i;
+@@ -2182,30 +2207,32 @@ static void apply_xp_controls( BOOL use_xp, UINT scheme )
+     if (!get_theme_value( theme, L"ColorName", color, ARRAY_SIZE(color) )) color[0] = 0;
+     active = get_theme_value( theme, L"ThemeActive", value, ARRAY_SIZE(value) ) && value[0] != '0';
+ 
+-    if (use_xp && get_xp_theme_path( xp_path, ARRAY_SIZE(xp_path) ))
+-    {
+-        const WCHAR *xp_color = xp_theme_colors[scheme < ARRAY_SIZE(xp_theme_colors) ? scheme : 0][is_dark_theme()];
++    if (use == CONTROLS_M3)
++        swprintf( wanted_color, ARRAY_SIZE(wanted_color), L"%s%s", m3_theme_colors[m3_accent % M3_ACCENTS],
++                  m3_is_dark() ? L"Dark" : L"Light" );
++    else if (use == CONTROLS_XP)
++        lstrcpyW( wanted_color, xp_theme_colors[scheme < ARRAY_SIZE(xp_theme_colors) ? scheme : 0][is_dark_theme()] );
+ 
+-        if (!active || !is_xp_theme( dll ))
++    if (use != CONTROLS_DEFAULT && get_theme_path( use, path, ARRAY_SIZE(path) ))
++    {
++        if (!active || !is_own_theme( dll ))
+         {
+             /* remember the current theme, missing values included */
+             for (i = 0; i < ARRAY_SIZE(saved_theme_values); i++) copy_theme_value( theme, saved, saved_theme_values[i] );
+             set_theme_value( saved, L"Saved", L"1" );
+-            set_theme_value( theme, L"ColorName", xp_color );
++        }
++        if (!active || lstrcmpiW( dll, path ) || lstrcmpiW( color, wanted_color ))
++        {
++            set_theme_value( theme, L"ColorName", wanted_color );
+             set_theme_value( theme, L"SizeName", L"NormalSize" );
+-            set_theme_value( theme, L"DllName", xp_path );
++            set_theme_value( theme, L"DllName", path );
+             /* the theme counts as loaded before, so that loading it never touches the system metrics */
+             set_theme_value( theme, L"LoadedBefore", L"1" );
+             set_theme_value( theme, L"ThemeActive", L"1" );
+             changed = TRUE;
+         }
+-        else if (lstrcmpiW( color, xp_color ))
+-        {
+-            set_theme_value( theme, L"ColorName", xp_color );
+-            changed = TRUE;
+-        }
+     }
+-    else if (!use_xp && active && is_xp_theme( dll ))
++    else if (use == CONTROLS_DEFAULT && active && is_own_theme( dll ))
+     {
+         if (get_theme_value( saved, L"Saved", value, ARRAY_SIZE(value) ))
+         {
+@@ -2229,7 +2256,7 @@ static void apply_xp_controls( BOOL use_xp, UINT scheme )
+ 
+     RegCloseKey( saved );
+     RegCloseKey( theme );
+-    TRACE( "xp controls %d scheme %u changed %d\n", use_xp, scheme, changed );
++    TRACE( "controls theme %d scheme %u changed %d\n", use, scheme, changed );
+     if (changed) EnumWindows( post_theme_changed, 0 );
+ }
+ 
+@@ -2600,7 +2627,8 @@ static void apply_display_settings( const struct display_settings *settings )
+     m3_apply_system_colors( settings->xp && settings->m3 && settings->app_colors );
+     if (settings->xp && settings->m3) m3_install_fonts();
+     xp_controls = settings->controls;
+-    apply_xp_controls( settings->xp && !settings->m3 && settings->controls, taskbar_scheme );
++    apply_controls_theme( !settings->xp || !settings->controls ? CONTROLS_DEFAULT :
++                          settings->m3 ? CONTROLS_M3 : CONTROLS_XP, taskbar_scheme );
+     /* let the other processes pick up the frame style, then have every window repaint its frame;
+      * win32u only draws the XP frames with the xp style */
+     if (settings->frames != xp_frames || settings->frames || restyle)
+@@ -3330,8 +3358,9 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
+     if (enable_taskbar)
+     {
+         xp_load_settings();
+-        apply_xp_controls( xp_style && !m3_style && xp_controls, taskbar_scheme );
+         m3_apply_system_colors( xp_style && m3_style && m3_app_colors );
++        apply_controls_theme( !xp_style || !xp_controls ? CONTROLS_DEFAULT :
++                              m3_style ? CONTROLS_M3 : CONTROLS_XP, taskbar_scheme );
+         if (xp_style && m3_style) m3_install_fonts();
+ 
+         SystemParametersInfoW( SPI_GETWORKAREA, 0, &work_rect, 0 );

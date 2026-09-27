@@ -1,0 +1,258 @@
+From fb05f0bedf20b26d0e78cb4d068f33421565407e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 13:00:08 +0000
+Subject: [PATCH 18/18] comctl32, m3.msstyles: Pill push buttons without a
+ dotted focus box.
+
+The push buttons of the Material 3 style were rounded rectangles with
+11 pixel corners, and the focused one had a dotted rectangle inside:
+a box inside a rounded button. The button images are now 34 pixel
+circles with 16 pixel sizing margins, a pill on buttons up to 34 pixels
+high, and with m3.msstyles the focused push button shows the accent
+ring of the default button instead of the dotted rectangle.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ dlls/comctl32_v6/button.c      |  19 +++++++++++++++++++
+ dlls/m3.msstyles/m3.rc         |  24 ++++++++++++------------
+ dlls/m3.msstyles/m3_button.bmp | Bin 13878 -> 27798 bytes
+ 3 files changed, 31 insertions(+), 12 deletions(-)
+
+diff --git a/dlls/comctl32_v6/button.c b/dlls/comctl32_v6/button.c
+index 9128e523c..79e929682 100644
+--- a/dlls/comctl32_v6/button.c
++++ b/dlls/comctl32_v6/button.c
+@@ -2744,6 +2744,19 @@ cleanup:
+ /**********************************************************************
+  *       Themed Paint Functions
+  */
++
++/* The Material 3 style (m3.msstyles) shows the focused push button with the ring of the
++ * default button: a dotted rectangle doesn't fit its rounded buttons. */
++static BOOL focus_ring_theme(void)
++{
++    WCHAR path[MAX_PATH];
++    const WCHAR *name;
++
++    if (FAILED(GetCurrentThemeName(path, ARRAY_SIZE(path), NULL, 0, NULL, 0))) return FALSE;
++    name = wcsrchr(path, '\\');
++    return !lstrcmpiW(name ? name + 1 : path, L"m3.msstyles");
++}
++
+ static void PB_ThemedPaint(HTHEME theme, const BUTTON_INFO *infoPtr, HDC hDC, int state, UINT dtFlags, BOOL focused)
+ {
+     RECT bgRect, labelRect, imageRect, textRect, focusRect;
+@@ -2752,6 +2765,12 @@ static void PB_ThemedPaint(HTHEME theme, const BUTTON_INFO *infoPtr, HDC hDC, in
+     LRESULT cdrf;
+     HWND parent;
+ 
++    if (focused && focus_ring_theme())
++    {
++        if (state == PBS_NORMAL) state = PBS_DEFAULTED;
++        focused = FALSE;
++    }
++
+     if (infoPtr->font) SelectObject(hDC, infoPtr->font);
+ 
+     GetClientRect(infoPtr->hwnd, &bgRect);
+diff --git a/dlls/m3.msstyles/m3.rc b/dlls/m3.msstyles/m3.rc
+index 5f0801edc..edbaad263 100644
+--- a/dlls/m3.msstyles/m3.rc
++++ b/dlls/m3.msstyles/m3.rc
+@@ -180,7 +180,7 @@ PURPLELIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -3167,7 +3167,7 @@ PURPLEDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -6154,7 +6154,7 @@ BLUELIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -9141,7 +9141,7 @@ BLUEDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -12128,7 +12128,7 @@ TEALLIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -15115,7 +15115,7 @@ TEALDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -18102,7 +18102,7 @@ GREENLIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -21089,7 +21089,7 @@ GREENDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -24076,7 +24076,7 @@ ORANGELIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -27063,7 +27063,7 @@ ORANGEDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -30050,7 +30050,7 @@ PINKLIGHT_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+@@ -33037,7 +33037,7 @@ PINKDARK_INI TEXTFILE
+ "\r\n"
+ "[Button.Pushbutton]\r\n"
+ "BgType = ImageFile\r\n"
+-"SizingMargins = 11, 11, 11, 11\r\n"
++"SizingMargins = 16, 16, 16, 16\r\n"
+ "SizingType = Stretch\r\n"
+ "ContentMargins = 6, 6, 3, 3\r\n"
+ "ImageFile = m3_button.bmp\r\n"
+diff --git a/dlls/m3.msstyles/m3_button.bmp b/dlls/m3.msstyles/m3_button.bmp
+index d82dbc2027bb97f9d8399aa243c7a45efe40a217..4d623b7ae49f042d3751483ad05bff53b9929c1c 100644
+GIT binary patch
+literal 27798
+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
+
+literal 13878
+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
+EA1YeO6#xJL
+

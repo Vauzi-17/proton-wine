@@ -1,0 +1,930 @@
+From 5246f7d5c84acfbbbc3da001ae6fff0089f7a937 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 08:23:27 +0000
+Subject: [PATCH 04/18] explorer: Add a Material 3 settings page.
+
+Display Properties of the Material 3 style: a frameless page with a top
+app bar, a preview, segmented buttons for the style, the brightness and
+the taskbar rows, color swatches and switches, drawn with the Material 3
+helpers. Changes apply at once; Done closes the page. The XP and classic
+styles keep the Display Properties dialog, both can switch to the other.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ programs/explorer/Makefile.in        |   1 +
+ programs/explorer/explorer.rc        |  15 +
+ programs/explorer/explorer_private.h |  20 +
+ programs/explorer/m3settings.c       | 675 +++++++++++++++++++++++++++
+ programs/explorer/material.c         |  11 +-
+ programs/explorer/material.h         |   2 +
+ programs/explorer/resource.h         |  15 +
+ programs/explorer/systray.c          |  54 ++-
+ 8 files changed, 774 insertions(+), 19 deletions(-)
+ create mode 100644 programs/explorer/m3settings.c
+
+diff --git a/programs/explorer/Makefile.in b/programs/explorer/Makefile.in
+index cbbbfc6e9..762983cba 100644
+--- a/programs/explorer/Makefile.in
++++ b/programs/explorer/Makefile.in
+@@ -10,6 +10,7 @@ SOURCES = \
+ 	explorer.c \
+ 	explorer.rc \
+ 	m3launcher.c \
++	m3settings.c \
+ 	material.c \
+ 	startmenu.c \
+ 	systray.c
+diff --git a/programs/explorer/explorer.rc b/programs/explorer/explorer.rc
+index 013d0ffcc..c09fb49e0 100644
+--- a/programs/explorer/explorer.rc
++++ b/programs/explorer/explorer.rc
+@@ -81,6 +81,21 @@ STRINGTABLE
+     IDS_M3_DRIVES       "Drives"
+     IDS_M3_SETTINGS     "Desktop settings"
+     IDS_M3_SHUT_DOWN    "Shut down"
++    IDS_M3_STYLE        "Style"
++    IDS_M3_COLOR        "Color"
++    IDS_M3_BRIGHTNESS   "Brightness"
++    IDS_M3_AUTO         "Auto"
++    IDS_M3_STYLE_XP     "Windows XP"
++    IDS_M3_STYLE_CLASSIC "Classic"
++    IDS_M3_TASKBAR      "Taskbar and desktop"
++    IDS_M3_SHOW_CLOCK   "Show the clock"
++    IDS_M3_LOCK         "Lock the taskbar"
++    IDS_M3_ROWS         "Taskbar rows"
++    IDS_M3_BACKGROUND   "Themed background"
++    IDS_M3_XP_FRAMES    "XP title bars and frames"
++    IDS_M3_XP_CONTROLS  "XP buttons and controls"
++    IDS_M3_DONE         "Done"
++    IDS_M3_CLASSIC_NOTE "The plain Wine taskbar and windows."
+ }
+ 
+ IDD_DISPLAY_PROPERTIES DIALOGEX 0, 0, 262, 306
+diff --git a/programs/explorer/explorer_private.h b/programs/explorer/explorer_private.h
+index c584af053..e0a6d50ee 100644
+--- a/programs/explorer/explorer_private.h
++++ b/programs/explorer/explorer_private.h
+@@ -31,6 +31,26 @@ extern void do_m3_launcher( HWND tray );
+ extern void run_dialog(void);
+ extern void shut_down( HWND hwnd );
+ extern void show_display_settings(void);
++
++struct display_settings
++{
++    BOOL xp;      /* the hand painted taskbar: Luna or Material 3 */
++    BOOL m3;
++    UINT accent;  /* Material 3 */
++    UINT mode;
++    UINT scheme;  /* Luna */
++    int  rows;
++    BOOL locked;
++    BOOL clock;
++    BOOL frames;
++    BOOL wallpaper;
++    BOOL controls;
++};
++
++extern void get_display_settings( struct display_settings *settings );
++extern void set_display_settings( const struct display_settings *settings );
++extern void paint_display_preview( HDC hdc, const RECT *rect, const struct display_settings *settings );
++extern void show_m3_settings(void);
+ extern UINT get_taskbar_scheme(void);
+ extern UINT get_taskbar_palette(void);
+ extern void show_desktop_menu( HWND hwnd, LPARAM lparam );
+diff --git a/programs/explorer/m3settings.c b/programs/explorer/m3settings.c
+new file mode 100644
+index 000000000..6d735b731
+--- /dev/null
++++ b/programs/explorer/m3settings.c
+@@ -0,0 +1,675 @@
++/*
++ * Material 3 settings page of the desktop, Display Properties of the Material 3 style
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <windows.h>
++
++#include "explorer_private.h"
++#include "material.h"
++#include "resource.h"
++
++/*
++ * Changes apply at once, like the settings of the phone: every click updates the
++ * taskbar, the background and the page itself, Done closes the page. The window has
++ * no frame, the page draws its own top app bar and is dragged by it.
++ */
++
++enum control_type
++{
++    CTRL_STYLE,       /* index: 0 Material 3, 1 Windows XP, 2 classic */
++    CTRL_COLOR,       /* index: accent, or Luna scheme */
++    CTRL_MODE,        /* index: enum m3_mode */
++    CTRL_XP_FRAMES,
++    CTRL_XP_CONTROLS,
++    CTRL_CLOCK,
++    CTRL_LOCK,
++    CTRL_ROWS,        /* index: rows - 1 */
++    CTRL_BACKGROUND,
++    CTRL_DONE,
++    CTRL_CLOSE,
++};
++
++struct control
++{
++    enum control_type type;
++    int               index;
++    RECT              rect;
++    BOOL              enabled;
++};
++
++#define MAX_CONTROLS 32
++
++static HWND settings_window;
++static struct display_settings settings;
++static struct control controls[MAX_CONTROLS];
++static unsigned int control_count;
++static int hot_control = -1, pressed_control = -1;
++static UINT settings_dpi = USER_DEFAULT_SCREEN_DPI;
++static HFONT title_font, label_font, body_font, icon_font, small_icon_font, check_font;
++static int client_width, client_height, left_bottom, right_bottom;
++static int labels_y[4];  /* style, color, brightness, taskbar */
++static RECT preview_rect;
++
++/* the Luna color schemes, as swatches */
++static const COLORREF xp_swatches[3] = { RGB(0x24,0x5e,0xdc), RGB(0x8f,0xa4,0x68), RGB(0xc0,0xc0,0xd0) };
++
++static int px( int size )
++{
++    return MulDiv( size, settings_dpi, USER_DEFAULT_SCREEN_DPI );
++}
++
++static int current_style(void)
++{
++    return !settings.xp ? 2 : settings.m3 ? 0 : 1;
++}
++
++/* the page shows the colors it applies */
++static BOOL page_is_dark(void)
++{
++    return m3_mode_is_dark( settings.mode );
++}
++
++static const struct m3_colors *page_colors(void)
++{
++    return m3_scheme( settings.accent, page_is_dark() );
++}
++
++static struct control *add_control( enum control_type type, int index, int x, int y, int width, int height,
++                                    BOOL enabled )
++{
++    struct control *control;
++
++    if (control_count >= ARRAY_SIZE(controls)) return NULL;
++    control = &controls[control_count++];
++    control->type = type;
++    control->index = index;
++    control->enabled = enabled;
++    SetRect( &control->rect, x, y, x + width, y + height );
++    return control;
++}
++
++static void layout(void)
++{
++    int pad = px( 24 ), left_width = px( 336 ), right_width = px( 300 ), gap = px( 32 );
++    int left = pad, right = pad + left_width + gap, y, i, seg, done_width;
++    int style = current_style(), row = px( 52 );
++    WCHAR text[64];
++    HDC hdc;
++    HGDIOBJ old;
++    SIZE size;
++
++    control_count = 0;
++    client_width = right + right_width + pad;
++    /* the top app bar, with the close button on the right */
++    add_control( CTRL_CLOSE, 0, client_width - px( 8 + 48 ), px( 8 ), px( 48 ), px( 48 ), TRUE );
++    SetRect( &preview_rect, pad, px( 64 ), client_width - pad, px( 64 + 96 ));
++
++    /* left column: style, color, brightness or the XP options */
++    y = preview_rect.bottom + px( 20 );
++    labels_y[0] = y;
++    seg = left_width / 3;
++    for (i = 0; i < 3; i++) add_control( CTRL_STYLE, i, left + i * seg, y + px( 28 ), seg, px( 40 ), TRUE );
++    y += px( 28 + 40 + 16 );
++
++    labels_y[1] = y;
++    if (style == 0)
++        for (i = 0; i < M3_ACCENTS; i++)
++            add_control( CTRL_COLOR, i, left + i * px( 56 ), y + px( 28 ), px( 48 ), px( 48 ), TRUE );
++    else
++        for (i = 0; i < ARRAY_SIZE(xp_swatches); i++)
++            add_control( CTRL_COLOR, i, left + i * px( 56 ), y + px( 28 ), px( 48 ), px( 48 ), style == 1 );
++    y += px( 28 + 48 + 16 );
++
++    labels_y[2] = y;
++    if (style == 0)
++    {
++        for (i = 0; i < M3_MODES; i++) add_control( CTRL_MODE, i, left + i * seg, y + px( 28 ), seg, px( 40 ), TRUE );
++        y += px( 28 + 40 );
++    }
++    else if (style == 1)
++    {
++        add_control( CTRL_XP_FRAMES, 0, left, y, left_width, row, TRUE );
++        add_control( CTRL_XP_CONTROLS, 0, left, y + row, left_width, row, TRUE );
++        y += 2 * row;
++    }
++    else y += px( 40 );
++    left_bottom = y;
++
++    /* right column: the taskbar */
++    y = labels_y[3] = preview_rect.bottom + px( 20 );
++    y += px( 28 );
++    add_control( CTRL_CLOCK, 0, right, y, right_width, row, style != 2 );
++    add_control( CTRL_LOCK, 0, right, y + row, right_width, row, style != 2 );
++    for (i = 0; i < 3; i++)
++        add_control( CTRL_ROWS, i, right + right_width - (3 - i) * px( 48 ), y + 2 * row + (row - px( 40 )) / 2,
++                     px( 48 ), px( 40 ), style != 2 );
++    add_control( CTRL_BACKGROUND, 0, right, y + 3 * row, right_width, row, style != 2 );
++    right_bottom = y + 4 * row;
++
++    /* the Done button, under both columns */
++    LoadStringW( NULL, IDS_M3_DONE, text, ARRAY_SIZE(text) );
++    hdc = GetDC( 0 );
++    old = SelectObject( hdc, label_font );
++    GetTextExtentPoint32W( hdc, text, lstrlenW( text ), &size );
++    SelectObject( hdc, old );
++    ReleaseDC( 0, hdc );
++    done_width = size.cx + px( 48 );
++    y = max( left_bottom, right_bottom ) + px( 24 );
++    add_control( CTRL_DONE, 0, client_width - pad - done_width, y, done_width, px( 40 ), TRUE );
++    client_height = y + px( 40 ) + pad;
++}
++
++static BOOL control_selected( const struct control *control )
++{
++    switch (control->type)
++    {
++    case CTRL_STYLE: return control->index == current_style();
++    case CTRL_COLOR: return control->index == (int)(settings.m3 ? settings.accent : settings.scheme);
++    case CTRL_MODE: return control->index == (int)settings.mode;
++    case CTRL_XP_FRAMES: return settings.frames;
++    case CTRL_XP_CONTROLS: return settings.controls;
++    case CTRL_CLOCK: return settings.clock;
++    case CTRL_LOCK: return settings.locked;
++    case CTRL_ROWS: return control->index == settings.rows - 1;
++    case CTRL_BACKGROUND: return settings.wallpaper;
++    default: return FALSE;
++    }
++}
++
++/* disabled controls are drawn at 38% */
++static COLORREF dim( COLORREF color, BOOL enabled )
++{
++    return enabled ? color : m3_blend( page_colors()->surface, color, 97 );
++}
++
++static void draw_label( HDC hdc, UINT id, int x, int y, int width, COLORREF color )
++{
++    WCHAR text[64];
++    RECT rect;
++
++    LoadStringW( NULL, id, text, ARRAY_SIZE(text) );
++    SetRect( &rect, x, y, x + width, y + px( 20 ));
++    m3_draw_text( hdc, label_font, text, &rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX, color );
++}
++
++/* a segmented button: the controls of one group side by side, the outer ends rounded */
++static void draw_segments( HDC hdc, enum control_type type, const UINT *ids, BOOL icons_only,
++                           const struct m3_colors *colors )
++{
++    RECT group = { 0 }, rect;
++    unsigned int i, first = ~0u;
++    int radius;
++
++    for (i = 0; i < control_count; i++)
++    {
++        if (controls[i].type != type) continue;
++        if (first == ~0u)
++        {
++            first = i;
++            group = controls[i].rect;
++        }
++        else UnionRect( &group, &group, &controls[i].rect );
++    }
++    if (first == ~0u) return;
++    radius = (group.bottom - group.top) / 2;
++
++    for (i = first; i < control_count && controls[i].type == type; i++)
++    {
++        const struct control *control = &controls[i];
++        BOOL selected = control_selected( control );
++        COLORREF text = dim( selected ? colors->on_secondary_container : colors->on_surface, control->enabled );
++        WCHAR label[64];
++
++        /* the whole group shape, clipped to the segment */
++        SaveDC( hdc );
++        IntersectClipRect( hdc, control->rect.left, control->rect.top, control->rect.right, control->rect.bottom );
++        if (selected)
++            m3_fill_round_rect( hdc, group.left, group.top, group.right - group.left, group.bottom - group.top,
++                                radius, dim( colors->secondary_container, control->enabled ), 255 );
++        if ((int)i == hot_control && control->enabled)
++            m3_fill_round_rect( hdc, group.left, group.top, group.right - group.left, group.bottom - group.top,
++                                radius, text, (int)i == pressed_control ? M3_STATE_PRESSED : M3_STATE_HOVER );
++        RestoreDC( hdc, -1 );
++        if (i > first)
++        {
++            HGDIOBJ old_brush = SelectObject( hdc, GetStockObject( DC_BRUSH ));
++
++            SetDCBrushColor( hdc, dim( colors->outline, control->enabled ));
++            PatBlt( hdc, control->rect.left, group.top, 1, group.bottom - group.top, PATCOPY );
++            SelectObject( hdc, old_brush );
++        }
++
++        if (icons_only) wsprintfW( label, L"%d", control->index + 1 );
++        else LoadStringW( NULL, ids[control->index], label, ARRAY_SIZE(label) );
++        rect = control->rect;
++        if (selected && !icons_only)
++        {
++            /* the check mark in front of the label */
++            HGDIOBJ old = SelectObject( hdc, label_font );
++            SIZE size;
++            int left;
++
++            GetTextExtentPoint32W( hdc, label, lstrlenW( label ), &size );
++            SelectObject( hdc, old );
++            left = rect.left + (rect.right - rect.left - size.cx - px( 26 )) / 2;
++            SetRect( &rect, left, control->rect.top, left + px( 18 ), control->rect.bottom );
++            m3_draw_icon( hdc, check_font, M3_ICON_CHECK, &rect, text );
++            SetRect( &rect, left + px( 26 ), control->rect.top, control->rect.right, control->rect.bottom );
++            m3_draw_text( hdc, label_font, label, &rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX, text );
++        }
++        else m3_draw_text( hdc, label_font, label, &rect, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX, text );
++    }
++    m3_frame_round_rect( hdc, group.left, group.top, group.right - group.left, group.bottom - group.top, radius,
++                         px( 1 ), dim( colors->outline, controls[first].enabled ), 255 );
++}
++
++/* a list row: the label on the left, a switch on the right */
++static void draw_switch_row( HDC hdc, const struct control *control, UINT id, const struct m3_colors *colors, BOOL hot )
++{
++    BOOL on = control_selected( control ), enabled = control->enabled;
++    int width = px( 52 ), height = px( 32 ), x = control->rect.right - width;
++    int y = control->rect.top + (control->rect.bottom - control->rect.top - height) / 2;
++    int handle = on ? px( 24 ) : px( 16 ), hx = on ? x + width - px( 4 ) - handle : x + px( 8 );
++    WCHAR text[64];
++    RECT rect;
++
++    if (hot && enabled)
++        m3_fill_round_rect( hdc, control->rect.left - px( 8 ), control->rect.top, control->rect.right -
++                            control->rect.left + px( 16 ), control->rect.bottom - control->rect.top, px( 12 ),
++                            colors->on_surface, (int)(control - controls) == pressed_control ? M3_STATE_PRESSED : M3_STATE_HOVER );
++
++    LoadStringW( NULL, id, text, ARRAY_SIZE(text) );
++    SetRect( &rect, control->rect.left, control->rect.top, x - px( 12 ), control->rect.bottom );
++    m3_draw_text( hdc, body_font, text, &rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS,
++                  dim( colors->on_surface, enabled ));
++
++    if (on)
++    {
++        m3_fill_round_rect( hdc, x, y, width, height, height / 2, dim( colors->primary, enabled ), 255 );
++        m3_fill_round_rect( hdc, hx, y + (height - handle) / 2, handle, handle, handle / 2,
++                            dim( colors->on_primary, enabled ), 255 );
++        SetRect( &rect, hx, y + (height - handle) / 2, hx + handle, y + (height + handle) / 2 );
++        m3_draw_icon( hdc, small_icon_font, M3_ICON_CHECK, &rect, dim( colors->primary, enabled ));
++    }
++    else
++    {
++        m3_fill_round_rect( hdc, x, y, width, height, height / 2, dim( colors->surface_container_highest, enabled ), 255 );
++        m3_frame_round_rect( hdc, x, y, width, height, height / 2, px( 2 ), dim( colors->outline, enabled ), 255 );
++        m3_fill_round_rect( hdc, hx, y + (height - handle) / 2, handle, handle, handle / 2,
++                            dim( colors->outline, enabled ), 255 );
++    }
++}
++
++static void draw_swatch( HDC hdc, const struct control *control, const struct m3_colors *colors, BOOL hot )
++{
++    const RECT *rc = &control->rect;
++    int size = rc->right - rc->left, ring = px( 5 );
++    COLORREF color, check;
++    RECT rect = *rc;
++
++    if (settings.m3)
++    {
++        const struct m3_colors *swatch = m3_scheme( control->index, page_is_dark() );
++
++        color = swatch->primary;
++        check = swatch->on_primary;
++    }
++    else
++    {
++        color = xp_swatches[control->index];
++        check = control->index == 2 ? RGB(0x1c,0x1c,0x3c) : RGB(0xff,0xff,0xff);
++    }
++    color = dim( color, control->enabled );
++    m3_fill_round_rect( hdc, rc->left, rc->top, size, size, size / 2, color, 255 );
++    if (hot && control->enabled)
++        m3_fill_round_rect( hdc, rc->left, rc->top, size, size, size / 2, check,
++                            (int)(control - controls) == pressed_control ? M3_STATE_PRESSED : M3_STATE_HOVER );
++    if (control_selected( control ))
++    {
++        m3_frame_round_rect( hdc, rc->left - ring, rc->top - ring, size + 2 * ring, size + 2 * ring,
++                             size / 2 + ring, px( 2 ), dim( colors->on_surface, control->enabled ), 255 );
++        m3_draw_icon( hdc, icon_font, M3_ICON_CHECK, &rect, check );
++    }
++}
++
++static void paint_page( HDC hdc )
++{
++    static const UINT style_ids[] = { IDS_DP_STYLE_M3, IDS_M3_STYLE_XP, IDS_M3_STYLE_CLASSIC };
++    static const UINT mode_ids[] = { IDS_M3_AUTO, IDS_DP_MODE_LIGHT, IDS_DP_MODE_DARK };
++    const struct m3_colors *colors = page_colors();
++    int pad = px( 24 ), style = current_style(), radius = px( 16 );
++    HGDIOBJ old_brush;
++    unsigned int i;
++
++    old_brush = SelectObject( hdc, GetStockObject( DC_BRUSH ));
++    SetDCBrushColor( hdc, colors->surface );
++    PatBlt( hdc, 0, 0, client_width, client_height, PATCOPY );
++    /* a thin outline instead of the window frame */
++    SetDCBrushColor( hdc, colors->outline_variant );
++    PatBlt( hdc, 0, 0, client_width, 1, PATCOPY );
++    PatBlt( hdc, 0, client_height - 1, client_width, 1, PATCOPY );
++    PatBlt( hdc, 0, 0, 1, client_height, PATCOPY );
++    PatBlt( hdc, client_width - 1, 0, 1, client_height, PATCOPY );
++    SelectObject( hdc, old_brush );
++
++    {
++        WCHAR title[64];
++        RECT rect;
++
++        LoadStringW( NULL, IDS_M3_SETTINGS, title, ARRAY_SIZE(title) );
++        SetRect( &rect, pad, 0, client_width - px( 64 ), px( 64 ));
++        m3_draw_text( hdc, title_font, title, &rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX, colors->on_surface );
++    }
++
++    /* the preview, with rounded corners */
++    paint_display_preview( hdc, &preview_rect, &settings );
++    m3_frame_round_rect( hdc, preview_rect.left - radius, preview_rect.top - radius,
++                         preview_rect.right - preview_rect.left + 2 * radius,
++                         preview_rect.bottom - preview_rect.top + 2 * radius, 2 * radius, radius, colors->surface, 255 );
++
++    draw_label( hdc, IDS_M3_STYLE, pad, labels_y[0], px( 336 ), colors->on_surface_variant );
++    draw_label( hdc, IDS_M3_COLOR, pad, labels_y[1], px( 336 ), dim( colors->on_surface_variant, style != 2 ));
++    if (style == 0) draw_label( hdc, IDS_M3_BRIGHTNESS, pad, labels_y[2], px( 336 ), colors->on_surface_variant );
++    else if (style == 2)
++        draw_label( hdc, IDS_M3_CLASSIC_NOTE, pad, labels_y[2], px( 336 ), colors->on_surface_variant );
++    draw_label( hdc, IDS_M3_TASKBAR, pad + px( 336 + 32 ), labels_y[3], px( 300 ), colors->on_surface_variant );
++
++    draw_segments( hdc, CTRL_STYLE, style_ids, FALSE, colors );
++    draw_segments( hdc, CTRL_MODE, mode_ids, FALSE, colors );
++    draw_segments( hdc, CTRL_ROWS, NULL, TRUE, colors );
++
++    for (i = 0; i < control_count; i++)
++    {
++        const struct control *control = &controls[i];
++        BOOL hot = (int)i == hot_control;
++        RECT rect;
++
++        switch (control->type)
++        {
++        case CTRL_COLOR:
++            draw_swatch( hdc, control, colors, hot );
++            break;
++        case CTRL_XP_FRAMES:
++            draw_switch_row( hdc, control, IDS_M3_XP_FRAMES, colors, hot );
++            break;
++        case CTRL_XP_CONTROLS:
++            draw_switch_row( hdc, control, IDS_M3_XP_CONTROLS, colors, hot );
++            break;
++        case CTRL_CLOCK:
++            draw_switch_row( hdc, control, IDS_M3_SHOW_CLOCK, colors, hot );
++            break;
++        case CTRL_LOCK:
++            draw_switch_row( hdc, control, IDS_M3_LOCK, colors, hot );
++            break;
++        case CTRL_BACKGROUND:
++            draw_switch_row( hdc, control, IDS_M3_BACKGROUND, colors, hot );
++            break;
++        case CTRL_ROWS:
++            if (control->index) break;
++            /* the label of the rows buttons */
++            SetRect( &rect, px( 24 + 336 + 32 ), control->rect.top, control->rect.left - px( 12 ), control->rect.bottom );
++            {
++                WCHAR text[64];
++
++                LoadStringW( NULL, IDS_M3_ROWS, text, ARRAY_SIZE(text) );
++                m3_draw_text( hdc, body_font, text, &rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX,
++                              dim( colors->on_surface, control->enabled ));
++            }
++            break;
++        case CTRL_DONE:
++        {
++            WCHAR text[64];
++            int height = control->rect.bottom - control->rect.top;
++
++            m3_fill_round_rect( hdc, control->rect.left, control->rect.top, control->rect.right - control->rect.left,
++                                height, height / 2, colors->primary, 255 );
++            if (hot)
++                m3_fill_round_rect( hdc, control->rect.left, control->rect.top,
++                                    control->rect.right - control->rect.left, height, height / 2, colors->on_primary,
++                                    (int)i == pressed_control ? M3_STATE_PRESSED : M3_STATE_HOVER );
++            LoadStringW( NULL, IDS_M3_DONE, text, ARRAY_SIZE(text) );
++            rect = control->rect;
++            m3_draw_text( hdc, label_font, text, &rect, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX,
++                          colors->on_primary );
++            break;
++        }
++        case CTRL_CLOSE:
++            if (hot)
++                m3_fill_round_rect( hdc, control->rect.left, control->rect.top, control->rect.right - control->rect.left,
++                                    control->rect.bottom - control->rect.top, px( 24 ), colors->on_surface,
++                                    (int)i == pressed_control ? M3_STATE_PRESSED : M3_STATE_HOVER );
++            m3_draw_icon( hdc, icon_font, M3_ICON_CLOSE, &control->rect, colors->on_surface_variant );
++            break;
++        default:
++            break;
++        }
++    }
++}
++
++static void paint( HWND hwnd )
++{
++    HGDIOBJ old_bitmap;
++    PAINTSTRUCT ps;
++    HBITMAP bitmap;
++    HDC hdc, mem;
++
++    hdc = BeginPaint( hwnd, &ps );
++    if ((mem = CreateCompatibleDC( hdc )))
++    {
++        bitmap = CreateCompatibleBitmap( hdc, client_width, client_height );
++        old_bitmap = SelectObject( mem, bitmap );
++        paint_page( mem );
++        BitBlt( hdc, 0, 0, client_width, client_height, mem, 0, 0, SRCCOPY );
++        SelectObject( mem, old_bitmap );
++        DeleteObject( bitmap );
++        DeleteDC( mem );
++    }
++    EndPaint( hwnd, &ps );
++}
++
++static int hit_test( POINT pt )
++{
++    unsigned int i;
++
++    for (i = 0; i < control_count; i++)
++        if (controls[i].enabled && PtInRect( &controls[i].rect, pt )) return i;
++    return -1;
++}
++
++static void resize_window(void)
++{
++    RECT rect = { 0, 0, client_width, client_height };
++
++    AdjustWindowRectEx( &rect, GetWindowLongW( settings_window, GWL_STYLE ), FALSE,
++                        GetWindowLongW( settings_window, GWL_EXSTYLE ));
++    SetWindowPos( settings_window, 0, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
++                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE );
++}
++
++static void activate( const struct control *control )
++{
++    int height = client_height;
++
++    switch (control->type)
++    {
++    case CTRL_STYLE:
++        settings.xp = control->index != 2;
++        settings.m3 = control->index == 0;
++        break;
++    case CTRL_COLOR:
++        if (settings.m3) settings.accent = control->index;
++        else settings.scheme = control->index;
++        break;
++    case CTRL_MODE: settings.mode = control->index; break;
++    case CTRL_XP_FRAMES: settings.frames = !settings.frames; break;
++    case CTRL_XP_CONTROLS: settings.controls = !settings.controls; break;
++    case CTRL_CLOCK: settings.clock = !settings.clock; break;
++    case CTRL_LOCK: settings.locked = !settings.locked; break;
++    case CTRL_ROWS: settings.rows = control->index + 1; break;
++    case CTRL_BACKGROUND: settings.wallpaper = !settings.wallpaper; break;
++    case CTRL_DONE:
++    case CTRL_CLOSE:
++        DestroyWindow( settings_window );
++        return;
++    }
++    set_display_settings( &settings );
++    hot_control = pressed_control = -1;
++    layout();
++    if (client_height != height) resize_window();
++    InvalidateRect( settings_window, NULL, FALSE );
++}
++
++static LRESULT CALLBACK settings_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
++{
++    POINT pt;
++    int index;
++
++    switch (msg)
++    {
++    case WM_PAINT:
++        paint( hwnd );
++        return 0;
++
++    case WM_ERASEBKGND:
++        return 1;
++
++    case WM_NCHITTEST:
++        /* the top app bar moves the window */
++        pt.x = (short)LOWORD( lparam );
++        pt.y = (short)HIWORD( lparam );
++        ScreenToClient( hwnd, &pt );
++        if (pt.y >= 0 && pt.y < px( 64 ) && hit_test( pt ) < 0) return HTCAPTION;
++        return HTCLIENT;
++
++    case WM_MOUSEMOVE:
++    {
++        TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
++
++        pt.x = (short)LOWORD( lparam );
++        pt.y = (short)HIWORD( lparam );
++        index = hit_test( pt );
++        if (index != hot_control)
++        {
++            hot_control = index;
++            InvalidateRect( hwnd, NULL, FALSE );
++        }
++        TrackMouseEvent( &tme );
++        return 0;
++    }
++
++    case WM_MOUSELEAVE:
++        if (hot_control >= 0)
++        {
++            hot_control = pressed_control = -1;
++            InvalidateRect( hwnd, NULL, FALSE );
++        }
++        return 0;
++
++    case WM_LBUTTONDOWN:
++        pt.x = (short)LOWORD( lparam );
++        pt.y = (short)HIWORD( lparam );
++        hot_control = pressed_control = hit_test( pt );
++        InvalidateRect( hwnd, NULL, FALSE );
++        return 0;
++
++    case WM_LBUTTONUP:
++        pt.x = (short)LOWORD( lparam );
++        pt.y = (short)HIWORD( lparam );
++        index = hit_test( pt );
++        if (index >= 0 && index == pressed_control) activate( &controls[index] );
++        else
++        {
++            pressed_control = -1;
++            InvalidateRect( hwnd, NULL, FALSE );
++        }
++        return 0;
++
++    case WM_KEYDOWN:
++        if (wparam == VK_ESCAPE || wparam == VK_RETURN) DestroyWindow( hwnd );
++        return 0;
++
++    case WM_SYSCOLORCHANGE:
++        InvalidateRect( hwnd, NULL, FALSE );
++        break;
++
++    case WM_DESTROY:
++    {
++        HFONT *fonts[] = { &title_font, &label_font, &body_font, &icon_font, &small_icon_font, &check_font };
++        unsigned int i;
++
++        for (i = 0; i < ARRAY_SIZE(fonts); i++)
++        {
++            if (*fonts[i]) DeleteObject( *fonts[i] );
++            *fonts[i] = 0;
++        }
++        settings_window = 0;
++        break;
++    }
++    }
++    return DefWindowProcW( hwnd, msg, wparam, lparam );
++}
++
++void show_m3_settings(void)
++{
++    static const WCHAR classW[] = L"__wine_m3_settings";
++    static BOOL registered;
++    DWORD style = WS_POPUP;
++    WCHAR title[64];
++    RECT rect, work;
++
++    if (settings_window)  /* already open */
++    {
++        SetForegroundWindow( settings_window );
++        return;
++    }
++    if (!registered)
++    {
++        WNDCLASSEXW cls;
++
++        memset( &cls, 0, sizeof(cls) );
++        cls.cbSize = sizeof(cls);
++        cls.lpfnWndProc = settings_proc;
++        cls.hCursor = LoadCursorW( 0, (const WCHAR *)IDC_ARROW );
++        cls.hIcon = LoadIconW( GetModuleHandleW( NULL ), MAKEINTRESOURCEW( IDI_WINE_LOGO ));
++        cls.lpszClassName = classW;
++        registered = RegisterClassExW( &cls ) != 0;
++    }
++
++    settings_dpi = GetDpiForSystem();
++    if (!settings_dpi) settings_dpi = USER_DEFAULT_SCREEN_DPI;
++    get_display_settings( &settings );
++    title_font = m3_create_font( px( 22 ), FALSE );
++    label_font = m3_create_font( px( 14 ), TRUE );
++    body_font = m3_create_font( px( 16 ), FALSE );
++    icon_font = m3_create_icon_font( px( 24 ), FALSE );
++    small_icon_font = m3_create_icon_font( px( 16 ), FALSE );
++    check_font = m3_create_icon_font( px( 18 ), FALSE );
++    hot_control = pressed_control = -1;
++    layout();
++
++    SetRect( &rect, 0, 0, client_width, client_height );
++    AdjustWindowRectEx( &rect, style, FALSE, 0 );
++    SystemParametersInfoW( SPI_GETWORKAREA, 0, &work, 0 );
++    LoadStringW( NULL, IDS_M3_SETTINGS, title, ARRAY_SIZE(title) );
++    settings_window = CreateWindowExW( 0, classW, title, style,
++                                       work.left + max( 0, (work.right - work.left - (rect.right - rect.left)) / 2 ),
++                                       work.top + max( 0, (work.bottom - work.top - (rect.bottom - rect.top)) / 2 ),
++                                       rect.right - rect.left, rect.bottom - rect.top, 0, 0, 0, NULL );
++    if (!settings_window) return;
++    ShowWindow( settings_window, SW_SHOWNORMAL );
++    SetForegroundWindow( settings_window );
++}
+diff --git a/programs/explorer/material.c b/programs/explorer/material.c
+index 2a9cee01e..848319e3f 100644
+--- a/programs/explorer/material.c
++++ b/programs/explorer/material.c
+@@ -186,16 +186,21 @@ void m3_save_settings(void)
+ }
+ 
+ /* the apps switch between light and dark window colors */
+-BOOL m3_is_dark(void)
++BOOL m3_mode_is_dark( UINT mode )
+ {
+     COLORREF color;
+ 
+-    if (m3_mode == M3_MODE_LIGHT) return FALSE;
+-    if (m3_mode == M3_MODE_DARK) return TRUE;
++    if (mode == M3_MODE_LIGHT) return FALSE;
++    if (mode == M3_MODE_DARK) return TRUE;
+     color = GetSysColor( COLOR_WINDOW );
+     return (GetRValue(color) * 299 + GetGValue(color) * 587 + GetBValue(color) * 114) / 1000 < 128;
+ }
+ 
++BOOL m3_is_dark(void)
++{
++    return m3_mode_is_dark( m3_mode );
++}
++
+ const struct m3_colors *m3_scheme( UINT accent, BOOL dark )
+ {
+     return (const struct m3_colors *)m3_palettes[accent < M3_ACCENTS ? accent : 0][dark ? 1 : 0];
+diff --git a/programs/explorer/material.h b/programs/explorer/material.h
+index 1e3dabd7b..14176d407 100644
+--- a/programs/explorer/material.h
++++ b/programs/explorer/material.h
+@@ -64,12 +64,14 @@ enum m3_mode
+ #define M3_ICON_GRID_VIEW       0xe9b0
+ #define M3_ICON_SPORTS_ESPORTS  0xea28
+ #define M3_ICON_CHECK           0xe668
++#define M3_ICON_CLOSE           0xe5cd
+ 
+ extern UINT m3_accent;
+ extern UINT m3_mode;
+ 
+ extern void m3_load_settings(void);
+ extern void m3_save_settings(void);
++extern BOOL m3_mode_is_dark( UINT mode );
+ extern BOOL m3_is_dark(void);
+ extern const struct m3_colors *m3_scheme( UINT accent, BOOL dark );
+ extern const struct m3_colors *m3_get_colors(void);
+diff --git a/programs/explorer/resource.h b/programs/explorer/resource.h
+index ff68ad5c4..ad8e52d23 100644
+--- a/programs/explorer/resource.h
++++ b/programs/explorer/resource.h
+@@ -76,6 +76,21 @@
+ #define IDS_M3_DRIVES 60
+ #define IDS_M3_SETTINGS 61
+ #define IDS_M3_SHUT_DOWN 62
++#define IDS_M3_STYLE 63
++#define IDS_M3_COLOR 64
++#define IDS_M3_BRIGHTNESS 65
++#define IDS_M3_AUTO 66
++#define IDS_M3_STYLE_XP 67
++#define IDS_M3_STYLE_CLASSIC 68
++#define IDS_M3_TASKBAR 69
++#define IDS_M3_SHOW_CLOCK 70
++#define IDS_M3_LOCK 71
++#define IDS_M3_ROWS 72
++#define IDS_M3_BACKGROUND 73
++#define IDS_M3_XP_FRAMES 74
++#define IDS_M3_XP_CONTROLS 75
++#define IDS_M3_DONE 76
++#define IDS_M3_CLASSIC_NOTE 77
+ 
+ #define IDI_WINE_LOGO 100
+ #define IDB_WALLPAPER_LIGHT 110
+diff --git a/programs/explorer/systray.c b/programs/explorer/systray.c
+index 14dfac2fa..94aad19ae 100644
+--- a/programs/explorer/systray.c
++++ b/programs/explorer/systray.c
+@@ -2515,21 +2515,6 @@ void reset_xp_wallpaper(void)
+ #define IDM_DESKTOP_REFRESH     0x7101
+ #define IDM_DESKTOP_PROPERTIES  0x7102
+ 
+-struct display_settings
+-{
+-    BOOL xp;      /* the hand painted taskbar: Luna or Material 3 */
+-    BOOL m3;
+-    UINT accent;  /* Material 3 */
+-    UINT mode;
+-    UINT scheme;  /* Luna */
+-    int  rows;
+-    BOOL locked;
+-    BOOL clock;
+-    BOOL frames;
+-    BOOL wallpaper;
+-    BOOL controls;
+-};
+-
+ static HWND display_dialog;
+ static UINT dialog_scheme, dialog_accent;  /* the color picked for each style, the list shows one of them */
+ 
+@@ -2704,7 +2689,7 @@ static void update_dialog_state( HWND dlg )
+ /* the preview of the Material 3 style: background, a window and the taskbar */
+ static void draw_m3_preview( HDC hdc, int width, int height, const struct display_settings *settings )
+ {
+-    BOOL dark = settings->mode == M3_MODE_LIGHT ? FALSE : settings->mode == M3_MODE_DARK ? TRUE : is_dark_theme();
++    BOOL dark = m3_mode_is_dark( settings->mode );
+     const struct m3_colors *colors = m3_scheme( settings->accent, dark );
+     int bar = max( height / 4, 14 ), top = height - bar, size = bar - 4, pill = bar - 8;
+     HFONT font = m3_create_font( max( bar / 2 - 1, 8 ), TRUE );
+@@ -2954,8 +2939,45 @@ static INT_PTR CALLBACK display_properties_proc( HWND dlg, UINT msg, WPARAM wpar
+     return FALSE;
+ }
+ 
++/* the current settings, for the Material 3 settings page */
++void get_display_settings( struct display_settings *settings )
++{
++    settings->xp = xp_style;
++    settings->m3 = m3_style;
++    settings->accent = m3_accent;
++    settings->mode = m3_mode;
++    settings->scheme = get_taskbar_scheme();
++    settings->rows = taskbar_rows;
++    settings->locked = taskbar_locked;
++    settings->clock = show_clock;
++    settings->frames = xp_frames;
++    settings->wallpaper = xp_wallpaper;
++    settings->controls = xp_controls;
++}
++
++void set_display_settings( const struct display_settings *settings )
++{
++    apply_display_settings( settings );
++}
++
++void paint_display_preview( HDC hdc, const RECT *rect, const struct display_settings *settings )
++{
++    DRAWITEMSTRUCT dis;
++
++    memset( &dis, 0, sizeof(dis) );
++    dis.hDC = hdc;
++    dis.rcItem = *rect;
++    draw_display_preview( &dis, settings );
++}
++
+ static void show_display_properties( HWND owner )
+ {
++    /* the Material 3 style has its own settings page, the dialog can switch back to it */
++    if (m3_style)
++    {
++        show_m3_settings();
++        return;
++    }
+     if (display_dialog)  /* already open */
+     {
+         SetForegroundWindow( display_dialog );

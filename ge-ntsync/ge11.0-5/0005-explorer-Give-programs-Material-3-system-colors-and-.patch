@@ -1,0 +1,405 @@
+From 9319840900dd18157e25be456e4d06152b67dae2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 09:11:41 +0000
+Subject: [PATCH 05/18] explorer: Give programs Material 3 system colors and
+ fonts.
+
+The Material 3 style sets the system colors from the selected scheme,
+so window, button and menu colors in programs match the desktop, and
+restores the colors set by the host application when it is turned off
+or another style is chosen. Roboto is installed into the Fonts folder
+so window titles can use it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ programs/explorer/explorer.rc        |   1 +
+ programs/explorer/explorer_private.h |   1 +
+ programs/explorer/m3settings.c       |  10 +-
+ programs/explorer/material.c         | 185 ++++++++++++++++++++++++++-
+ programs/explorer/material.h         |   3 +
+ programs/explorer/resource.h         |   1 +
+ programs/explorer/systray.c          |   7 +
+ 7 files changed, 206 insertions(+), 2 deletions(-)
+
+diff --git a/programs/explorer/explorer.rc b/programs/explorer/explorer.rc
+index c09fb49e0..98249ca78 100644
+--- a/programs/explorer/explorer.rc
++++ b/programs/explorer/explorer.rc
+@@ -96,6 +96,7 @@ STRINGTABLE
+     IDS_M3_XP_CONTROLS  "XP buttons and controls"
+     IDS_M3_DONE         "Done"
+     IDS_M3_CLASSIC_NOTE "The plain Wine taskbar and windows."
++    IDS_M3_APP_COLORS   "Material colors in programs"
+ }
+ 
+ IDD_DISPLAY_PROPERTIES DIALOGEX 0, 0, 262, 306
+diff --git a/programs/explorer/explorer_private.h b/programs/explorer/explorer_private.h
+index e0a6d50ee..cbe4f0a8c 100644
+--- a/programs/explorer/explorer_private.h
++++ b/programs/explorer/explorer_private.h
+@@ -45,6 +45,7 @@ struct display_settings
+     BOOL frames;
+     BOOL wallpaper;
+     BOOL controls;
++    BOOL app_colors;  /* Material 3 system colors */
+ };
+ 
+ extern void get_display_settings( struct display_settings *settings );
+diff --git a/programs/explorer/m3settings.c b/programs/explorer/m3settings.c
+index 6d735b731..a4f54d9fd 100644
+--- a/programs/explorer/m3settings.c
++++ b/programs/explorer/m3settings.c
+@@ -39,6 +39,7 @@ enum control_type
+     CTRL_LOCK,
+     CTRL_ROWS,        /* index: rows - 1 */
+     CTRL_BACKGROUND,
++    CTRL_APP_COLORS,
+     CTRL_DONE,
+     CTRL_CLOSE,
+ };
+@@ -138,7 +139,9 @@ static void layout(void)
+     if (style == 0)
+     {
+         for (i = 0; i < M3_MODES; i++) add_control( CTRL_MODE, i, left + i * seg, y + px( 28 ), seg, px( 40 ), TRUE );
+-        y += px( 28 + 40 );
++        y += px( 28 + 40 + 8 );
++        add_control( CTRL_APP_COLORS, 0, left, y, left_width, row, TRUE );
++        y += row;
+     }
+     else if (style == 1)
+     {
+@@ -186,6 +189,7 @@ static BOOL control_selected( const struct control *control )
+     case CTRL_LOCK: return settings.locked;
+     case CTRL_ROWS: return control->index == settings.rows - 1;
+     case CTRL_BACKGROUND: return settings.wallpaper;
++    case CTRL_APP_COLORS: return settings.app_colors;
+     default: return FALSE;
+     }
+ }
+@@ -418,6 +422,9 @@ static void paint_page( HDC hdc )
+         case CTRL_BACKGROUND:
+             draw_switch_row( hdc, control, IDS_M3_BACKGROUND, colors, hot );
+             break;
++        case CTRL_APP_COLORS:
++            draw_switch_row( hdc, control, IDS_M3_APP_COLORS, colors, hot );
++            break;
+         case CTRL_ROWS:
+             if (control->index) break;
+             /* the label of the rows buttons */
+@@ -521,6 +528,7 @@ static void activate( const struct control *control )
+     case CTRL_LOCK: settings.locked = !settings.locked; break;
+     case CTRL_ROWS: settings.rows = control->index + 1; break;
+     case CTRL_BACKGROUND: settings.wallpaper = !settings.wallpaper; break;
++    case CTRL_APP_COLORS: settings.app_colors = !settings.app_colors; break;
+     case CTRL_DONE:
+     case CTRL_CLOSE:
+         DestroyWindow( settings_window );
+diff --git a/programs/explorer/material.c b/programs/explorer/material.c
+index 848319e3f..8468124e0 100644
+--- a/programs/explorer/material.c
++++ b/programs/explorer/material.c
+@@ -154,6 +154,7 @@ static const COLORREF m3_palettes[M3_ACCENTS][2][sizeof(struct m3_colors) / size
+ 
+ UINT m3_accent;               /* index in m3_palettes */
+ UINT m3_mode = M3_MODE_SYSTEM;
++BOOL m3_app_colors = TRUE;    /* Material 3 system colors for the programs */
+ 
+ static const WCHAR taskbar_key[] = L"Software\\Wine\\Explorer\\Taskbar";
+ 
+@@ -169,6 +170,9 @@ void m3_load_settings(void)
+     size = sizeof(value);
+     if (!RegGetValueW( hkey, NULL, L"Mode", RRF_RT_REG_DWORD, NULL, &value, &size ))
+         m3_mode = value < M3_MODES ? value : M3_MODE_SYSTEM;
++    size = sizeof(value);
++    if (!RegGetValueW( hkey, NULL, L"AppColors", RRF_RT_REG_DWORD, NULL, &value, &size ))
++        m3_app_colors = value != 0;
+     RegCloseKey( hkey );
+ }
+ 
+@@ -182,6 +186,68 @@ void m3_save_settings(void)
+     RegSetValueExW( hkey, L"Accent", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
+     value = m3_mode;
+     RegSetValueExW( hkey, L"Mode", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
++    value = m3_app_colors;
++    RegSetValueExW( hkey, L"AppColors", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
++    RegCloseKey( hkey );
++}
++
++/*
++ * System colors. The app sets its light or dark window colors before Wine starts; in the
++ * Material 3 style they are replaced by the roles of the scheme, so that the programs
++ * drawing with the system colors match the desktop. The colors of the app are kept in
++ * the registry and put back for the other styles. "Auto" follows the colors of the app.
++ */
++
++static const int system_color_ids[] =
++{
++    COLOR_SCROLLBAR, COLOR_BACKGROUND, COLOR_ACTIVECAPTION, COLOR_INACTIVECAPTION, COLOR_MENU, COLOR_WINDOW,
++    COLOR_WINDOWFRAME, COLOR_MENUTEXT, COLOR_WINDOWTEXT, COLOR_CAPTIONTEXT, COLOR_ACTIVEBORDER,
++    COLOR_INACTIVEBORDER, COLOR_APPWORKSPACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_BTNFACE,
++    COLOR_BTNSHADOW, COLOR_GRAYTEXT, COLOR_BTNTEXT, COLOR_INACTIVECAPTIONTEXT, COLOR_BTNHIGHLIGHT,
++    COLOR_3DDKSHADOW, COLOR_3DLIGHT, COLOR_INFOTEXT, COLOR_INFOBK, COLOR_HOTLIGHT, COLOR_GRADIENTACTIVECAPTION,
++    COLOR_GRADIENTINACTIVECAPTION, COLOR_MENUHILIGHT, COLOR_MENUBAR,
++};
++
++#define SYSTEM_COLORS ARRAY_SIZE(system_color_ids)
++
++static const WCHAR colors_key[] = L"Software\\Wine\\Explorer\\Taskbar\\SystemColors";
++static COLORREF app_colors[SYSTEM_COLORS];  /* the colors of the app */
++static BOOL app_colors_known;
++
++static void get_system_colors( COLORREF *colors )
++{
++    unsigned int i;
++
++    for (i = 0; i < SYSTEM_COLORS; i++) colors[i] = GetSysColor( system_color_ids[i] );
++}
++
++static BOOL read_colors( HKEY hkey, const WCHAR *name, COLORREF *colors )
++{
++    DWORD size = SYSTEM_COLORS * sizeof(COLORREF);
++
++    return !RegGetValueW( hkey, NULL, name, RRF_RT_REG_BINARY, NULL, colors, &size ) &&
++           size == SYSTEM_COLORS * sizeof(COLORREF);
++}
++
++/* the current colors are those of the app, unless they are the ones set last time */
++static void init_app_colors(void)
++{
++    COLORREF current[SYSTEM_COLORS], applied[SYSTEM_COLORS];
++    HKEY hkey;
++
++    if (app_colors_known) return;
++    app_colors_known = TRUE;
++    get_system_colors( current );
++    memcpy( app_colors, current, sizeof(app_colors) );
++    if (RegCreateKeyExW( HKEY_CURRENT_USER, colors_key, 0, NULL, 0, KEY_QUERY_VALUE | KEY_SET_VALUE,
++                         NULL, &hkey, NULL )) return;
++    if (read_colors( hkey, L"Applied", applied ) && !memcmp( applied, current, sizeof(current) ))
++        read_colors( hkey, L"App", app_colors );
++    else
++    {
++        RegSetValueExW( hkey, L"App", 0, REG_BINARY, (const BYTE *)app_colors, sizeof(app_colors) );
++        RegDeleteValueW( hkey, L"Applied" );
++    }
+     RegCloseKey( hkey );
+ }
+ 
+@@ -189,10 +255,13 @@ void m3_save_settings(void)
+ BOOL m3_mode_is_dark( UINT mode )
+ {
+     COLORREF color;
++    unsigned int i;
+ 
+     if (mode == M3_MODE_LIGHT) return FALSE;
+     if (mode == M3_MODE_DARK) return TRUE;
+-    color = GetSysColor( COLOR_WINDOW );
++    init_app_colors();
++    for (i = 0; i < SYSTEM_COLORS; i++) if (system_color_ids[i] == COLOR_WINDOW) break;
++    color = app_colors[i];
+     return (GetRValue(color) * 299 + GetGValue(color) * 587 + GetBValue(color) * 114) / 1000 < 128;
+ }
+ 
+@@ -211,6 +280,80 @@ const struct m3_colors *m3_get_colors(void)
+     return m3_scheme( m3_accent, m3_is_dark() );
+ }
+ 
++static COLORREF scheme_system_color( const struct m3_colors *c, int id )
++{
++    switch (id)
++    {
++    case COLOR_SCROLLBAR:        return c->surface_container_high;
++    case COLOR_BACKGROUND:       return c->surface_container_lowest;
++    case COLOR_ACTIVECAPTION:
++    case COLOR_GRADIENTACTIVECAPTION:
++    case COLOR_ACTIVEBORDER:     return c->surface_container_high;
++    case COLOR_INACTIVECAPTION:
++    case COLOR_GRADIENTINACTIVECAPTION:
++    case COLOR_INACTIVEBORDER:   return c->surface_container;
++    case COLOR_CAPTIONTEXT:      return c->on_surface;
++    case COLOR_INACTIVECAPTIONTEXT: return c->on_surface_variant;
++    case COLOR_MENU:
++    case COLOR_MENUBAR:
++    case COLOR_BTNFACE:          return c->surface_container;
++    case COLOR_WINDOW:           return c->surface;
++    case COLOR_WINDOWFRAME:      return c->outline_variant;
++    case COLOR_MENUTEXT:
++    case COLOR_WINDOWTEXT:
++    case COLOR_BTNTEXT:          return c->on_surface;
++    case COLOR_APPWORKSPACE:     return c->surface_container_low;
++    case COLOR_HIGHLIGHT:
++    case COLOR_MENUHILIGHT:      return c->primary_container;
++    case COLOR_HIGHLIGHTTEXT:    return c->on_primary_container;
++    case COLOR_GRAYTEXT:         return m3_blend( c->surface_container, c->on_surface, 97 );  /* 38% */
++    /* the 3D edges become a subtle outline */
++    case COLOR_BTNHIGHLIGHT:     return c->surface_container_highest;
++    case COLOR_3DLIGHT:          return c->surface_container_high;
++    case COLOR_BTNSHADOW:        return c->outline_variant;
++    case COLOR_3DDKSHADOW:       return c->outline;
++    case COLOR_INFOBK:           return c->inverse_surface;
++    case COLOR_INFOTEXT:         return c->inverse_on_surface;
++    case COLOR_HOTLIGHT:         return c->primary;
++    default:                     return GetSysColor( id );
++    }
++}
++
++/* the Material 3 colors, or the colors of the app back */
++void m3_apply_system_colors( BOOL enable )
++{
++    COLORREF current[SYSTEM_COLORS], colors[SYSTEM_COLORS], applied[SYSTEM_COLORS];
++    BOOL was_applied;
++    unsigned int i;
++    HKEY hkey;
++
++    init_app_colors();
++    if (RegCreateKeyExW( HKEY_CURRENT_USER, colors_key, 0, NULL, 0, KEY_QUERY_VALUE | KEY_SET_VALUE,
++                         NULL, &hkey, NULL )) return;
++    get_system_colors( current );
++    was_applied = read_colors( hkey, L"Applied", applied ) && !memcmp( applied, current, sizeof(current) );
++
++    if (enable)
++    {
++        const struct m3_colors *scheme = m3_get_colors();
++
++        for (i = 0; i < SYSTEM_COLORS; i++) colors[i] = scheme_system_color( scheme, system_color_ids[i] );
++        if (memcmp( colors, current, sizeof(colors) ))
++        {
++            SetSysColors( SYSTEM_COLORS, system_color_ids, colors );
++            get_system_colors( colors );  /* as stored */
++        }
++        RegSetValueExW( hkey, L"Applied", 0, REG_BINARY, (const BYTE *)colors, sizeof(colors) );
++    }
++    else if (was_applied)
++    {
++        SetSysColors( SYSTEM_COLORS, system_color_ids, app_colors );
++        RegDeleteValueW( hkey, L"Applied" );
++    }
++    RegCloseKey( hkey );
++    TRACE( "enable %d was applied %d\n", enable, was_applied );
++}
++
+ /* a color with a state layer of another color on top */
+ COLORREF m3_blend( COLORREF base, COLORREF over, BYTE alpha )
+ {
+@@ -248,6 +391,46 @@ static void init_fonts(void)
+     add_font_resource( IDR_FONT_SYMBOLS_FILLED );
+ }
+ 
++/* The Material 3 frames of the programs (drawn by win32u in every process) use Roboto Medium:
++ * the fonts go to the Fonts folder, where the processes started afterwards find them. */
++void m3_install_fonts(void)
++{
++    static const struct { UINT id; const WCHAR *name; } fonts[] =
++    {
++        { IDR_FONT_ROBOTO, L"wine_m3_roboto.ttf" },
++        { IDR_FONT_ROBOTO_MEDIUM, L"wine_m3_roboto_medium.ttf" },
++    };
++    WIN32_FILE_ATTRIBUTE_DATA attr;
++    WCHAR path[MAX_PATH];
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(fonts); i++)
++    {
++        HRSRC res = FindResourceW( NULL, MAKEINTRESOURCEW( fonts[i].id ), (const WCHAR *)RT_RCDATA );
++        DWORD size, written;
++        HGLOBAL mem;
++        HANDLE file;
++        void *data;
++
++        if (!res || !(size = SizeofResource( NULL, res ))) continue;
++        if (!(mem = LoadResource( NULL, res )) || !(data = LockResource( mem ))) continue;
++        if (!GetWindowsDirectoryW( path, MAX_PATH - 40 )) return;
++        lstrcatW( path, L"\\Fonts\\" );
++        lstrcatW( path, fonts[i].name );
++        if (GetFileAttributesExW( path, GetFileExInfoStandard, &attr ) && !attr.nFileSizeHigh &&
++            attr.nFileSizeLow == size)
++            continue;
++        file = CreateFileW( path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
++        if (file == INVALID_HANDLE_VALUE)
++        {
++            WARN( "can't write %s\n", debugstr_w(path) );
++            continue;
++        }
++        if (!WriteFile( file, data, size, &written, NULL ) || written != size) WARN( "failed to write %s\n", debugstr_w(path) );
++        CloseHandle( file );
++    }
++}
++
+ /* height is the em size in pixels, as the CSS font size */
+ HFONT m3_create_font( int height, BOOL medium )
+ {
+diff --git a/programs/explorer/material.h b/programs/explorer/material.h
+index 14176d407..35b65705c 100644
+--- a/programs/explorer/material.h
++++ b/programs/explorer/material.h
+@@ -68,6 +68,7 @@ enum m3_mode
+ 
+ extern UINT m3_accent;
+ extern UINT m3_mode;
++extern BOOL m3_app_colors;
+ 
+ extern void m3_load_settings(void);
+ extern void m3_save_settings(void);
+@@ -76,7 +77,9 @@ extern BOOL m3_is_dark(void);
+ extern const struct m3_colors *m3_scheme( UINT accent, BOOL dark );
+ extern const struct m3_colors *m3_get_colors(void);
+ extern COLORREF m3_blend( COLORREF base, COLORREF over, BYTE alpha );
++extern void m3_apply_system_colors( BOOL enable );
+ 
++extern void m3_install_fonts(void);
+ extern HFONT m3_create_font( int height, BOOL medium );
+ extern HFONT m3_create_icon_font( int size, BOOL filled );
+ extern void m3_draw_text( HDC hdc, HFONT font, const WCHAR *text, RECT *rect, UINT flags, COLORREF color );
+diff --git a/programs/explorer/resource.h b/programs/explorer/resource.h
+index ad8e52d23..5980f80d2 100644
+--- a/programs/explorer/resource.h
++++ b/programs/explorer/resource.h
+@@ -91,6 +91,7 @@
+ #define IDS_M3_XP_CONTROLS 75
+ #define IDS_M3_DONE 76
+ #define IDS_M3_CLASSIC_NOTE 77
++#define IDS_M3_APP_COLORS 78
+ 
+ #define IDI_WINE_LOGO 100
+ #define IDB_WALLPAPER_LIGHT 110
+diff --git a/programs/explorer/systray.c b/programs/explorer/systray.c
+index 94aad19ae..6dea2217f 100644
+--- a/programs/explorer/systray.c
++++ b/programs/explorer/systray.c
+@@ -2595,7 +2595,10 @@ static void apply_display_settings( const struct display_settings *settings )
+     xp_save_setting( L"Controls", settings->controls );
+     m3_accent = settings->accent < M3_ACCENTS ? settings->accent : 0;
+     m3_mode = settings->mode < M3_MODES ? settings->mode : M3_MODE_SYSTEM;
++    m3_app_colors = settings->app_colors;
+     m3_save_settings();
++    m3_apply_system_colors( settings->xp && settings->m3 && settings->app_colors );
++    if (settings->xp && settings->m3) m3_install_fonts();
+     xp_controls = settings->controls;
+     apply_xp_controls( settings->xp && !settings->m3 && settings->controls, taskbar_scheme );
+     /* let the other processes pick up the frame style, then have every window repaint its frame;
+@@ -2660,6 +2663,7 @@ static void get_dialog_settings( HWND dlg, struct display_settings *settings )
+     settings->m3 = style == 0;
+     settings->scheme = dialog_scheme;
+     settings->accent = dialog_accent;
++    settings->app_colors = m3_app_colors;
+     sel = SendDlgItemMessageW( dlg, IDC_DP_MODE, CB_GETCURSEL, 0, 0 );
+     settings->mode = sel > 0 && sel < M3_MODES ? sel : M3_MODE_SYSTEM;
+     sel = SendDlgItemMessageW( dlg, IDC_DP_ROWS, CB_GETCURSEL, 0, 0 );
+@@ -2953,6 +2957,7 @@ void get_display_settings( struct display_settings *settings )
+     settings->frames = xp_frames;
+     settings->wallpaper = xp_wallpaper;
+     settings->controls = xp_controls;
++    settings->app_colors = m3_app_colors;
+ }
+ 
+ void set_display_settings( const struct display_settings *settings )
+@@ -3326,6 +3331,8 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
+     {
+         xp_load_settings();
+         apply_xp_controls( xp_style && !m3_style && xp_controls, taskbar_scheme );
++        m3_apply_system_colors( xp_style && m3_style && m3_app_colors );
++        if (xp_style && m3_style) m3_install_fonts();
+ 
+         SystemParametersInfoW( SPI_GETWORKAREA, 0, &work_rect, 0 );
+         SetRect( &primary_rect, 0, 0, GetSystemMetrics( SM_CXSCREEN ), GetSystemMetrics( SM_CYSCREEN ) );

@@ -288,7 +288,9 @@ def draw_radiobutton(n):
     return c
 
 
-BUTTON = 24  # frame size of the push button, SizingMargins 11
+# frame size of the push button, SizingMargins 16: a pill up to 34 pixels high. On lower
+# buttons uxtheme keeps the ends of the arcs, which still meet at the middle of the sides.
+BUTTON = 34
 
 
 def draw_button():
@@ -753,7 +755,7 @@ def scheme_ini(sections, c):
                 item[1] = '%d %d %d' % color(name, key, value)
 
     # the Material 3 images
-    set_values(sections, 'Button.Pushbutton', SizingMargins='11, 11, 11, 11', ContentMargins='6, 6, 3, 3')
+    set_values(sections, 'Button.Pushbutton', SizingMargins='16, 16, 16, 16', ContentMargins='6, 6, 3, 3')
     set_values(sections, 'Button.Pushbutton(Defaulted)', TextColor='%d %d %d' % c['on_secondary_container'])
     set_values(sections, 'Button.Pushbutton(Pressed)', TextColor='%d %d %d' % c['on_secondary_container'])
     set_values(sections, 'Button.Groupbox', SizingMargins='8, 8, 8, 8')

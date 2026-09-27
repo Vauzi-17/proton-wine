@@ -14,6 +14,10 @@ on:
       - 'cachyos-ntsync/**'
       - '.github/workflows/build-cachyos1*-ntsync.yml'
       - '.github/release-notes/cachyos-*'
+      # and so does GE-Proton 11.0-5 with Material 3
+      - 'ge-ntsync/**'
+      - '.github/workflows/build-ge11-ntsync.yml'
+      - '.github/release-notes/ge-11.0-5-*'
   workflow_dispatch:
 
 env:

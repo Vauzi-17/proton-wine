@@ -1,0 +1,296 @@
+# GE-Proton 11.0-5 (bionic, arm64ec) + userspace ntsync + the Material 3 desktop.
+#
+# Source: the GE-Proton 11.0-5 ntsync tree of this repository (ge11.5-ntsync at BASE_SHA,
+# The412Banner's GE-Proton 11.0-5 Android port plus GameNative's userspace ntsync), with the
+# patch series in ge-ntsync/ge11.0-5/ applied on top by `git am`. The build steps are that
+# tree's own scripts, as in its workflow.
+name: Build GE-Proton 11.0-5 + userspace ntsync + Material 3 (arm64ec)
+
+on:
+  push:
+    branches: [ claude/proton-10-ntsync-compile-20dq12 ]
+    paths:
+      - 'ge-ntsync/**'
+      - '.github/workflows/build-ge11-ntsync.yml'
+      - '.github/release-notes/ge-11.0-5-m3-body.md'
+  workflow_dispatch:
+    inputs:
+      notes_tag:
+        description: 'Only replace the notes of this existing release (its tag) with the current release notes, without building'
+        required: false
+        default: ''
+
+env:
+  BASE_REPO: https://github.com/Vauzi-17/proton-wine
+  BASE_SHA: bbce88a9bb2744ad23fc2c1fd86ca0db394cb1a3
+  NTSYNC_ANDROID_REF: 7ce6435e5979b1cb5341aa4b299f31e8937fe121
+  SRC: ${{ github.workspace }}/src
+  OUTPUT_DIR: /home/runner/compiled-files-aarch64
+
+jobs:
+  build:
+    if: ${{ !inputs.notes_tag }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Checkout patch series
+        uses: actions/checkout@v4
+        with:
+          path: recipe
+
+      - name: Fetch base tree and apply patches
+        run: |
+          git init -q "$SRC" && cd "$SRC"
+          git remote add origin "$BASE_REPO"
+          git fetch -q --depth 1 origin "$BASE_SHA"
+          git checkout -q FETCH_HEAD
+          git -c user.name=ci -c user.email=ci@localhost am --whitespace=nowarn "$GITHUB_WORKSPACE"/recipe/ge-ntsync/ge11.0-5/*.patch
+          git submodule update --init --recursive --depth 50
+          git log --oneline -3
+
+      - name: Set up build environment
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget curl unzip flex bison gettext \
+            autoconf automake libtool pkg-config ccache zstd mingw-w64 gcc-multilib g++-multilib \
+            libfreetype6-dev libfreetype6-dev:i386 libpng-dev libpng-dev:i386 zlib1g-dev zlib1g-dev:i386
+
+      - name: Download and extract termuxfs
+        run: |
+          mkdir -p $HOME/termuxfs/aarch64 && cd $HOME/termuxfs/aarch64
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/GameNative/termux-on-gha/releases/download/build-20260218/termuxfs-aarch64.tar
+          tar -xf termuxfs-aarch64.tar
+
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/Android/Sdk/ndk/27.3.13750724
+          key: android-ndk-r27d
+
+      - name: Set up Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME/Android/Sdk/ndk && cd $HOME/Android/Sdk/ndk
+          wget --tries=5 --retry-connrefused --waitretry=10 https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          unzip -q android-ndk-r27d-linux.zip
+          mv android-ndk-r27d 27.3.13750724
+
+      - name: Cache LLVM MinGW toolchain
+        id: cache-llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchains/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64
+          key: bylaws-llvm-mingw-20250920
+
+      - name: Set up LLVM MinGW toolchain
+        if: steps.cache-llvm-mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME/toolchains && cd $HOME/toolchains
+          wget --tries=5 --retry-connrefused --waitretry=10 https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
+          tar -xf llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz
+
+      - name: Check out ntsync-android (userspace ntsync)
+        uses: actions/checkout@v4
+        with:
+          repository: GameNative/ntsync-android
+          ref: ${{ env.NTSYNC_ANDROID_REF }}
+          path: ntsync-android
+
+      - name: Set up Rust for ntsync-android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Autogen
+        working-directory: src
+        run: bash build-scripts/build-step0-autogen.sh
+
+      - name: Cache wine-tools
+        id: cache-wine-tools
+        uses: actions/cache@v4
+        with:
+          path: src/wine-tools
+          key: wine-tools-ge11-5-${{ hashFiles('src/configure.ac', 'src/configure', 'src/server/protocol.def') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-ge11-5-ntsync-m3-${{ github.sha }}
+          restore-keys: |
+            ccache-ge11-5-ntsync-m3-
+            ccache-p11-aarch64-28-
+
+      - name: Build wine-tools (step 0)
+        if: steps.cache-wine-tools.outputs.cache-hit != 'true'
+        working-directory: src
+        run: bash build-scripts/build-step0.sh
+
+      - name: Build sysvshm library
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --build-sysvshm
+
+      - name: Build ntsync-android library
+        working-directory: src
+        env:
+          NTSYNC_ANDROID_DIR: ${{ github.workspace }}/ntsync-android
+        run: bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
+
+      - name: Configure
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --configure
+
+      - name: Build
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --build
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Install
+        working-directory: src
+        run: bash build-scripts/build-step-arm64ec.sh --install
+
+      - name: Verify the build
+        run: |
+          # userspace ntsync must be in wineserver (the string survives llvm-strip)
+          grep -q 'using userspace ntsync' "$OUTPUT_DIR/bin/wineserver" || { echo "FATAL: wineserver lacks userspace ntsync"; exit 1; }
+          # the Material 3 desktop: its visual style, Files and the XP visual style it builds on
+          for f in m3.msstyles files.exe winexp.msstyles explorer.exe; do
+            ls "$OUTPUT_DIR"/lib/wine/aarch64-windows/$f || { echo "FATAL: $f is missing"; exit 1; }
+          done
+          echo "wineserver carries userspace ntsync; the Material 3 files are there."
+
+      - name: Download prefixPack.txz
+        run: |
+          wget --tries=5 --retry-connrefused --waitretry=10 https://raw.githubusercontent.com/GameNative/bionic-prefix-files/main/prefixPack-arm64ec-11.txz -O $GITHUB_WORKSPACE/prefixPack.txz
+
+      - name: Generate profile.json files
+        run: |
+          # The earlier GE-Proton 11.0-5 ntsync builds are 11.0-9 with versionCode 1; versionCode 2
+          # gives this one its own install slot so both can be installed side by side.
+          DESC="GE-Proton 11.0-5 arm64ec (bionic) + userspace ntsync + Material 3 desktop. Needs a new arm64ec container."
+          for type in Proton Wine; do
+            [ $type = Proton ] && out=profile.json || out=profile-wine.json
+            cat > $GITHUB_WORKSPACE/$out << EOF
+          {
+            "type": "$type",
+            "versionName": "11.0-9-arm64ec",
+            "versionCode": 2,
+            "description": "${DESC}",
+            "files": [],
+            "wine": {
+              "binPath": "bin",
+              "libPath": "lib",
+              "prefixPack": "prefixPack.txz"
+            }
+          }
+          EOF
+          done
+          cat $GITHUB_WORKSPACE/profile.json
+
+      - name: Package build artifacts
+        run: |
+          cd $OUTPUT_DIR
+          cp $GITHUB_WORKSPACE/prefixPack.txz .
+          cp $GITHUB_WORKSPACE/profile.json .
+          tar -I 'zstd -T0 -19' -cf $GITHUB_WORKSPACE/GE-proton-11.0-5-ntsync-m3-arm64ec-sdk28.wcp bin lib share prefixPack.txz profile.json
+          cp $GITHUB_WORKSPACE/profile-wine.json profile.json
+          tar cJf $GITHUB_WORKSPACE/GE-proton-wine-11.0-5-ntsync-m3-arm64ec-sdk28.wcp.xz bin lib share prefixPack.txz profile.json
+          ls -lah $GITHUB_WORKSPACE/*.wcp $GITHUB_WORKSPACE/*.wcp.xz
+
+      - name: Upload Proton build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ge-11-5-ntsync-m3-wcp
+          path: GE-proton-11.0-5-ntsync-m3-arm64ec-sdk28.wcp
+          retention-days: 30
+
+      - name: Upload Wine build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ge-11-5-ntsync-m3-wcp-xz
+          path: GE-proton-wine-11.0-5-ntsync-m3-arm64ec-sdk28.wcp.xz
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    # Pushes only build and upload artifacts; publishing a prerelease is a
+    # deliberate step: Actions -> this workflow -> Run workflow.
+    if: github.event_name == 'workflow_dispatch' && !inputs.notes_tag
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name '*.wcp' -exec cp {} release/ \;
+          find artifacts -name '*.wcp.xz' -exec cp {} release/ \;
+          ls -lah release/
+          [ "$(ls release | wc -l)" = 2 ] || { echo "expected 2 release files"; exit 1; }
+
+      - name: Assemble tag and notes
+        id: tag
+        run: |
+          echo "tag_name=GE-proton-11.0-5-ntsync-m3-$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          cp .github/release-notes/ge-11.0-5-m3-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built from \`${{ github.sha }}\`: \`ge11.5-ntsync\` \`${BASE_SHA:0:9}\` + \`ge-ntsync/ge11.0-5\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+          } >> release-body.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          name: GE-Proton 11.0-5 + userspace ntsync + Material 3 arm64ec (${{ steps.tag.outputs.tag_name }})
+          files: release/*
+          prerelease: true
+          body_path: release-body.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Run workflow with a release tag: its notes are replaced by the current
+  # release notes, with the footer of the commit it was built from.
+  notes:
+    if: github.event_name == 'workflow_dispatch' && inputs.notes_tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
+      - name: Replace the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.notes_tag }}
+        run: |
+          sha=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish -q .targetCommitish)
+          cp .github/release-notes/ge-11.0-5-m3-body.md release-body.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built from \`$sha\`: \`ge11.5-ntsync\` \`${BASE_SHA:0:9}\` + \`ge-ntsync/ge11.0-5\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+          } >> release-body.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-body.md

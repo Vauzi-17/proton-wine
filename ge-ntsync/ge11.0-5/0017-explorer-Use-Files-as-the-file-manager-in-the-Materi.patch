@@ -1,0 +1,365 @@
+From bf36a21b70fbe5501f22bb6b767c2b7b904fa61c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 14:18:11 +0000
+Subject: [PATCH 17/18] explorer: Use Files as the file manager in the Material
+ 3 style.
+
+The Android app starts C:\windows\wfm.exe, its own file manager, when
+there is no program to run. In the Material 3 style it is replaced by a
+copy of Files at startup and kept as wfm-winlator.exe, and put back for
+the other styles. explorer also opens folders in Files. Both follow a
+new switch on the settings page, on by default.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
+---
+ programs/explorer/explorer.c         |  31 ++++++++
+ programs/explorer/explorer.rc        |   1 +
+ programs/explorer/explorer_private.h |   1 +
+ programs/explorer/m3settings.c       |  11 +++
+ programs/explorer/material.c         | 102 +++++++++++++++++++++++++++
+ programs/explorer/material.h         |   3 +
+ programs/explorer/resource.h         |   1 +
+ programs/explorer/systray.c          |   6 ++
+ 8 files changed, 156 insertions(+)
+
+diff --git a/programs/explorer/explorer.c b/programs/explorer/explorer.c
+index 185414417..98c394804 100644
+--- a/programs/explorer/explorer.c
++++ b/programs/explorer/explorer.c
+@@ -24,6 +24,7 @@
+ 
+ #include "wine/debug.h"
+ #include "explorer_private.h"
++#include "material.h"
+ #include "resource.h"
+ 
+ #include <initguid.h>
+@@ -911,6 +912,34 @@ static void parse_command_line(LPWSTR commandline,parameters_struct *parameters)
+     }
+ }
+ 
++/* in the Material 3 style, folders open in Files */
++static BOOL open_in_files(const parameters_struct *parameters)
++{
++    WCHAR cmdline[MAX_PATH + 16];
++    STARTUPINFOW si;
++    PROCESS_INFORMATION pi;
++    int len;
++
++    if (!m3_files_opens_folders()) return FALSE;
++    lstrcpyW(cmdline, L"files.exe");
++    if (parameters->root[0])
++    {
++        if (!PathIsDirectoryW(parameters->root)) return FALSE;
++        lstrcatW(cmdline, L" \"");
++        lstrcatW(cmdline, parameters->root);
++        /* a backslash before the closing quote would escape it */
++        len = lstrlenW(cmdline);
++        if (cmdline[len - 1] == '\\') lstrcatW(cmdline, L"\\");
++        lstrcatW(cmdline, L"\"");
++    }
++    memset(&si, 0, sizeof(si));
++    si.cb = sizeof(si);
++    if (!CreateProcessW(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) return FALSE;
++    CloseHandle(pi.hThread);
++    CloseHandle(pi.hProcess);
++    return TRUE;
++}
++
+ int WINAPI wWinMain(HINSTANCE hinstance,
+                     HINSTANCE previnstance,
+                     LPWSTR cmdline,
+@@ -933,6 +962,8 @@ int WINAPI wWinMain(HINSTANCE hinstance,
+     if(parameters.root[0] && !PathIsDirectoryW(parameters.root))
+         if(ShellExecuteW(NULL,NULL,parameters.root,NULL,NULL,SW_SHOWDEFAULT) > (HINSTANCE)32)
+             ExitProcess(EXIT_SUCCESS);
++    if(open_in_files(&parameters))
++        ExitProcess(EXIT_SUCCESS);
+     init_info.dwSize = sizeof(INITCOMMONCONTROLSEX);
+     init_info.dwICC = ICC_USEREX_CLASSES | ICC_BAR_CLASSES | ICC_COOL_CLASSES;
+     if(!InitCommonControlsEx(&init_info))
+diff --git a/programs/explorer/explorer.rc b/programs/explorer/explorer.rc
+index b0441f029..14d41748e 100644
+--- a/programs/explorer/explorer.rc
++++ b/programs/explorer/explorer.rc
+@@ -99,6 +99,7 @@ STRINGTABLE
+     IDS_M3_APP_COLORS   "Material colors in programs"
+     IDS_M3_CONTROLS     "Material buttons and controls"
+     IDS_M3_APP_FONTS    "Roboto font in programs"
++    IDS_M3_FILE_MANAGER "Files as the file manager"
+ }
+ 
+ IDD_DISPLAY_PROPERTIES DIALOGEX 0, 0, 262, 306
+diff --git a/programs/explorer/explorer_private.h b/programs/explorer/explorer_private.h
+index 9491d04df..046fdc666 100644
+--- a/programs/explorer/explorer_private.h
++++ b/programs/explorer/explorer_private.h
+@@ -47,6 +47,7 @@ struct display_settings
+     BOOL controls;
+     BOOL app_colors;  /* Material 3 system colors */
+     BOOL app_fonts;   /* Roboto in the programs */
++    BOOL file_manager; /* Files in place of the file manager of the app */
+ };
+ 
+ extern void get_display_settings( struct display_settings *settings );
+diff --git a/programs/explorer/m3settings.c b/programs/explorer/m3settings.c
+index bdacd1496..1c307cdbb 100644
+--- a/programs/explorer/m3settings.c
++++ b/programs/explorer/m3settings.c
+@@ -41,6 +41,7 @@ enum control_type
+     CTRL_BACKGROUND,
+     CTRL_APP_COLORS,
+     CTRL_APP_FONTS,
++    CTRL_FILE_MANAGER,
+     CTRL_DONE,
+     CTRL_CLOSE,
+ };
+@@ -165,6 +166,11 @@ static void layout(void)
+                      px( 48 ), px( 40 ), style != 2 );
+     add_control( CTRL_BACKGROUND, 0, right, y + 3 * row, right_width, row, style != 2 );
+     right_bottom = y + 4 * row;
++    if (style == 0)
++    {
++        add_control( CTRL_FILE_MANAGER, 0, right, right_bottom, right_width, row, TRUE );
++        right_bottom += row;
++    }
+ 
+     /* the Done button, under both columns */
+     LoadStringW( NULL, IDS_M3_DONE, text, ARRAY_SIZE(text) );
+@@ -194,6 +200,7 @@ static BOOL control_selected( const struct control *control )
+     case CTRL_BACKGROUND: return settings.wallpaper;
+     case CTRL_APP_COLORS: return settings.app_colors;
+     case CTRL_APP_FONTS: return settings.app_fonts;
++    case CTRL_FILE_MANAGER: return settings.file_manager;
+     default: return FALSE;
+     }
+ }
+@@ -432,6 +439,9 @@ static void paint_page( HDC hdc )
+         case CTRL_APP_FONTS:
+             draw_switch_row( hdc, control, IDS_M3_APP_FONTS, colors, hot );
+             break;
++        case CTRL_FILE_MANAGER:
++            draw_switch_row( hdc, control, IDS_M3_FILE_MANAGER, colors, hot );
++            break;
+         case CTRL_ROWS:
+             if (control->index) break;
+             /* the label of the rows buttons */
+@@ -537,6 +547,7 @@ static void activate( const struct control *control )
+     case CTRL_BACKGROUND: settings.wallpaper = !settings.wallpaper; break;
+     case CTRL_APP_COLORS: settings.app_colors = !settings.app_colors; break;
+     case CTRL_APP_FONTS: settings.app_fonts = !settings.app_fonts; break;
++    case CTRL_FILE_MANAGER: settings.file_manager = !settings.file_manager; break;
+     case CTRL_DONE:
+     case CTRL_CLOSE:
+         DestroyWindow( settings_window );
+diff --git a/programs/explorer/material.c b/programs/explorer/material.c
+index 04132ff7d..5fe6ea7c4 100644
+--- a/programs/explorer/material.c
++++ b/programs/explorer/material.c
+@@ -157,6 +157,7 @@ UINT m3_accent;               /* index in m3_palettes */
+ UINT m3_mode = M3_MODE_SYSTEM;
+ BOOL m3_app_colors = TRUE;    /* Material 3 system colors for the programs */
+ BOOL m3_app_fonts = TRUE;     /* Roboto in the programs */
++BOOL m3_file_manager = TRUE;  /* Files in place of the file manager of the app */
+ 
+ static const WCHAR taskbar_key[] = L"Software\\Wine\\Explorer\\Taskbar";
+ 
+@@ -178,6 +179,9 @@ void m3_load_settings(void)
+     size = sizeof(value);
+     if (!RegGetValueW( hkey, NULL, L"AppFonts", RRF_RT_REG_DWORD, NULL, &value, &size ))
+         m3_app_fonts = value != 0;
++    size = sizeof(value);
++    if (!RegGetValueW( hkey, NULL, L"FileManager", RRF_RT_REG_DWORD, NULL, &value, &size ))
++        m3_file_manager = value != 0;
+     RegCloseKey( hkey );
+ }
+ 
+@@ -195,6 +199,8 @@ void m3_save_settings(void)
+     RegSetValueExW( hkey, L"AppColors", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
+     value = m3_app_fonts;
+     RegSetValueExW( hkey, L"AppFonts", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
++    value = m3_file_manager;
++    RegSetValueExW( hkey, L"FileManager", 0, REG_DWORD, (const BYTE *)&value, sizeof(value) );
+     RegCloseKey( hkey );
+ }
+ 
+@@ -567,6 +573,102 @@ void m3_apply_shell_icons( BOOL enable )
+     }
+ }
+ 
++/*
++ * Files as the file manager. The Android app starts C:\windows\wfm.exe, its own file manager,
++ * when there is no program to run. In the Material 3 style it is replaced by a copy of Files
++ * and kept as wfm-winlator.exe, to be put back for the other styles. The app puts its file
++ * manager back when it updates the prefix; it is replaced again at the next start.
++ */
++
++/* Files is a builtin program, the file manager of the app is not */
++static BOOL is_builtin_program( const WCHAR *path )
++{
++    static const char signature[] = "Wine builtin DLL";
++    char buffer[0x40 + sizeof(signature)];
++    DWORD read = 0;
++    HANDLE file;
++
++    file = CreateFileW( path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
++                        OPEN_EXISTING, 0, NULL );
++    if (file == INVALID_HANDLE_VALUE) return FALSE;
++    ReadFile( file, buffer, sizeof(buffer), &read, NULL );
++    CloseHandle( file );
++    return read == sizeof(buffer) && !memcmp( buffer + 0x40, signature, sizeof(signature) - 1 );
++}
++
++static BOOL same_contents( const WCHAR *path1, const WCHAR *path2 )
++{
++    HANDLE file1, file2;
++    BOOL same = FALSE;
++    char *buffer;
++    DWORD size;
++
++    file1 = CreateFileW( path1, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
++    file2 = CreateFileW( path2, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
++    if (file1 != INVALID_HANDLE_VALUE && file2 != INVALID_HANDLE_VALUE &&
++        (size = GetFileSize( file1, NULL )) == GetFileSize( file2, NULL ) && size < 64 << 20 &&
++        (buffer = malloc( 2 * (size_t)size + 1 )))
++    {
++        DWORD read1 = 0, read2 = 0;
++
++        same = ReadFile( file1, buffer, size, &read1, NULL ) && ReadFile( file2, buffer + size, size, &read2, NULL ) &&
++               read1 == size && read2 == size && !memcmp( buffer, buffer + size, size );
++        free( buffer );
++    }
++    if (file1 != INVALID_HANDLE_VALUE) CloseHandle( file1 );
++    if (file2 != INVALID_HANDLE_VALUE) CloseHandle( file2 );
++    return same;
++}
++
++void m3_apply_file_manager( BOOL enable )
++{
++    WCHAR files[MAX_PATH], wfm[MAX_PATH], backup[MAX_PATH];
++
++    GetSystemDirectoryW( files, MAX_PATH - 16 );
++    lstrcatW( files, L"\\files.exe" );
++    GetWindowsDirectoryW( wfm, MAX_PATH - 24 );
++    lstrcpyW( backup, wfm );
++    lstrcatW( wfm, L"\\wfm.exe" );
++    lstrcatW( backup, L"\\wfm-winlator.exe" );
++
++    /* only the file manager of the app is replaced, there is none elsewhere */
++    if (GetFileAttributesW( wfm ) == INVALID_FILE_ATTRIBUTES) return;
++
++    if (enable)
++    {
++        if (GetFileAttributesW( files ) == INVALID_FILE_ATTRIBUTES || same_contents( files, wfm )) return;
++        /* an older copy of Files is simply updated */
++        if (!is_builtin_program( wfm ) && !MoveFileExW( wfm, backup, MOVEFILE_REPLACE_EXISTING ))
++        {
++            WARN( "can't keep %s: %lu\n", debugstr_w(wfm), GetLastError() );
++            return;
++        }
++        if (!CopyFileW( files, wfm, FALSE ))
++        {
++            WARN( "can't copy Files: %lu\n", GetLastError() );
++            if (GetFileAttributesW( wfm ) == INVALID_FILE_ATTRIBUTES) MoveFileExW( backup, wfm, 0 );
++        }
++    }
++    else if (is_builtin_program( wfm ) && GetFileAttributesW( backup ) != INVALID_FILE_ATTRIBUTES)
++    {
++        if (!MoveFileExW( backup, wfm, MOVEFILE_REPLACE_EXISTING ))
++            WARN( "can't put back %s: %lu\n", debugstr_w(wfm), GetLastError() );
++    }
++}
++
++/* whether folders open in Files: the Material 3 style, with Files as the file manager */
++BOOL m3_files_opens_folders(void)
++{
++    WCHAR style[16];
++    DWORD size = sizeof(style);
++
++    if (!RegGetValueW( HKEY_CURRENT_USER, taskbar_key, L"Style", RRF_RT_REG_SZ, NULL, style, &size ) &&
++        lstrcmpiW( style, L"material3" ))
++        return FALSE;
++    m3_load_settings();
++    return m3_file_manager;
++}
++
+ /* height is the em size in pixels, as the CSS font size */
+ HFONT m3_create_font( int height, BOOL medium )
+ {
+diff --git a/programs/explorer/material.h b/programs/explorer/material.h
+index ec8b00443..4688e05bd 100644
+--- a/programs/explorer/material.h
++++ b/programs/explorer/material.h
+@@ -70,6 +70,7 @@ extern UINT m3_accent;
+ extern UINT m3_mode;
+ extern BOOL m3_app_colors;
+ extern BOOL m3_app_fonts;
++extern BOOL m3_file_manager;
+ 
+ extern void m3_load_settings(void);
+ extern void m3_save_settings(void);
+@@ -83,6 +84,8 @@ extern void m3_apply_system_colors( BOOL enable );
+ extern void m3_install_fonts(void);
+ extern void m3_apply_fonts( BOOL enable );
+ extern void m3_apply_shell_icons( BOOL enable );
++extern void m3_apply_file_manager( BOOL enable );
++extern BOOL m3_files_opens_folders(void);
+ extern HFONT m3_create_font( int height, BOOL medium );
+ extern HFONT m3_create_icon_font( int size, BOOL filled );
+ extern void m3_draw_text( HDC hdc, HFONT font, const WCHAR *text, RECT *rect, UINT flags, COLORREF color );
+diff --git a/programs/explorer/resource.h b/programs/explorer/resource.h
+index 296b676ac..84f244140 100644
+--- a/programs/explorer/resource.h
++++ b/programs/explorer/resource.h
+@@ -94,6 +94,7 @@
+ #define IDS_M3_APP_COLORS 78
+ #define IDS_M3_CONTROLS 79
+ #define IDS_M3_APP_FONTS 80
++#define IDS_M3_FILE_MANAGER 81
+ 
+ #define IDI_WINE_LOGO 100
+ #define IDB_WALLPAPER_LIGHT 110
+diff --git a/programs/explorer/systray.c b/programs/explorer/systray.c
+index afcaa8a43..a4fd2b455 100644
+--- a/programs/explorer/systray.c
++++ b/programs/explorer/systray.c
+@@ -2624,11 +2624,13 @@ static void apply_display_settings( const struct display_settings *settings )
+     m3_mode = settings->mode < M3_MODES ? settings->mode : M3_MODE_SYSTEM;
+     m3_app_colors = settings->app_colors;
+     m3_app_fonts = settings->app_fonts;
++    m3_file_manager = settings->file_manager;
+     m3_save_settings();
+     m3_apply_system_colors( settings->xp && settings->m3 && settings->app_colors );
+     if (settings->xp && settings->m3) m3_install_fonts();
+     m3_apply_fonts( settings->xp && settings->m3 && settings->app_fonts );
+     m3_apply_shell_icons( settings->xp && settings->m3 && settings->controls );
++    m3_apply_file_manager( settings->xp && settings->m3 && settings->file_manager );
+     xp_controls = settings->controls;
+     apply_controls_theme( !settings->xp || !settings->controls ? CONTROLS_DEFAULT :
+                           settings->m3 ? CONTROLS_M3 : CONTROLS_XP, taskbar_scheme );
+@@ -2696,6 +2698,7 @@ static void get_dialog_settings( HWND dlg, struct display_settings *settings )
+     settings->accent = dialog_accent;
+     settings->app_colors = m3_app_colors;
+     settings->app_fonts = m3_app_fonts;
++    settings->file_manager = m3_file_manager;
+     sel = SendDlgItemMessageW( dlg, IDC_DP_MODE, CB_GETCURSEL, 0, 0 );
+     settings->mode = sel > 0 && sel < M3_MODES ? sel : M3_MODE_SYSTEM;
+     sel = SendDlgItemMessageW( dlg, IDC_DP_ROWS, CB_GETCURSEL, 0, 0 );
+@@ -2991,6 +2994,7 @@ void get_display_settings( struct display_settings *settings )
+     settings->controls = xp_controls;
+     settings->app_colors = m3_app_colors;
+     settings->app_fonts = m3_app_fonts;
++    settings->file_manager = m3_file_manager;
+ }
+ 
+ void set_display_settings( const struct display_settings *settings )
+@@ -3369,6 +3373,8 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
+         if (xp_style && m3_style) m3_install_fonts();
+         m3_apply_fonts( xp_style && m3_style && m3_app_fonts );
+         m3_apply_shell_icons( xp_style && m3_style && xp_controls );
++        /* before the desktop starts its program, which may be the file manager */
++        m3_apply_file_manager( xp_style && m3_style && m3_file_manager );
+ 
+         SystemParametersInfoW( SPI_GETWORKAREA, 0, &work_rect, 0 );
+         SetRect( &primary_rect, 0, 0, GetSystemMetrics( SM_CXSCREEN ), GetSystemMetrics( SM_CYSCREEN ) );
