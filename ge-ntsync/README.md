@@ -29,4 +29,5 @@ After all the build-time Android patches, the Material 3 files are the same
 as in the proton-cachyos 11 build.
 
 A push that changes the series builds it and uploads the `.wcp`/`.wcp.xz`;
-publishing a prerelease is Actions, this workflow, Run workflow.
+publishing a prerelease is Actions, this workflow, Run workflow, or a push
+whose commit message has `[release]`.

@@ -224,8 +224,11 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     # Pushes only build and upload artifacts; publishing a prerelease is a
-    # deliberate step: Actions -> this workflow -> Run workflow.
-    if: github.event_name == 'workflow_dispatch' && !inputs.notes_tag
+    # deliberate step: Actions -> this workflow -> Run workflow, or a push
+    # whose commit message says [release].
+    if: >-
+      (github.event_name == 'workflow_dispatch' && !inputs.notes_tag) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
     permissions:
       contents: write
     steps:
