@@ -1,7 +1,7 @@
 From 5bb176fb4f361345eddaac04ae9972acf50094ee Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 11:35:35 +0000
-Subject: [PATCH 13/18] files: Add Files, a Material 3 file manager.
+Subject: [PATCH 13/19] files: Add Files, a Material 3 file manager.
 
 Based on Winlator File Manager (wfm) by BrunoSX, MIT License, with a
 Material 3 interface: a top app bar with breadcrumbs, a path field and

@@ -1,7 +1,7 @@
 From bf36a21b70fbe5501f22bb6b767c2b7b904fa61c Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 14:18:11 +0000
-Subject: [PATCH 17/18] explorer: Use Files as the file manager in the Material
+Subject: [PATCH 17/19] explorer: Use Files as the file manager in the Material
  3 style.
 
 The Android app starts C:\windows\wfm.exe, its own file manager, when

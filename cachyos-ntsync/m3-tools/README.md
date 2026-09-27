@@ -53,9 +53,10 @@ uxtheme recolors the images when it loads them (`p11/0008`). `--check`
 compares every recolored image with the same image drawn in the scheme's
 colors. `m3.rc.in` is the head of `m3.rc`.
 
-The push buttons are 34 pixel pills (`BUTTON`, SizingMargins 16), as in the
-GE-Proton 11.0-5 series (`ge-ntsync/ge11.0-5/0018`); `p11` still carries the
-earlier 24 pixel buttons with 11 pixel margins.
+The push buttons are 34 pixel pills (`BUTTON`, SizingMargins 16) and each
+scheme has `[WineSizing] ScaleCorners = true`, as in the GE-Proton 11.0-5
+series (`ge-ntsync/ge11.0-5/0018`-`0019`); `p11` still carries the earlier
+24 pixel buttons with 11 pixel margins and no `[WineSizing]`.
 
 ## Icons
 

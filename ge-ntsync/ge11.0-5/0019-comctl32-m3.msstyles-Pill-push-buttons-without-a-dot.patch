@@ -1,23 +1,24 @@
-From fb05f0bedf20b26d0e78cb4d068f33421565407e Mon Sep 17 00:00:00 2001
+From c3fb3bd95e5605b2b85db4deb25ddabbadffa096 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Sun, 27 Sep 2026 13:00:08 +0000
-Subject: [PATCH 18/18] comctl32, m3.msstyles: Pill push buttons without a
+Date: Sun, 27 Sep 2026 13:19:28 +0000
+Subject: [PATCH 19/19] comctl32, m3.msstyles: Pill push buttons without a
  dotted focus box.
 
 The push buttons of the Material 3 style were rounded rectangles with
 11 pixel corners, and the focused one had a dotted rectangle inside:
 a box inside a rounded button. The button images are now 34 pixel
-circles with 16 pixel sizing margins, a pill on buttons up to 34 pixels
-high, and with m3.msstyles the focused push button shows the accent
-ring of the default button instead of the dotted rectangle.
+circles with 16 pixel sizing margins and the style shrinks corners
+([WineSizing] ScaleCorners), so push buttons are pills at any height,
+and with m3.msstyles the focused push button shows the accent ring of
+the default button instead of the dotted rectangle.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_019oF8nnfMD8z5Z1MeNXoYS9
 ---
- dlls/comctl32_v6/button.c      |  19 +++++++++++++++++++
- dlls/m3.msstyles/m3.rc         |  24 ++++++++++++------------
+ dlls/comctl32_v6/button.c      |  19 +++++++++++
+ dlls/m3.msstyles/m3.rc         |  60 ++++++++++++++++++++++++++-------
  dlls/m3.msstyles/m3_button.bmp | Bin 13878 -> 27798 bytes
- 3 files changed, 31 insertions(+), 12 deletions(-)
+ 3 files changed, 67 insertions(+), 12 deletions(-)
 
 diff --git a/dlls/comctl32_v6/button.c b/dlls/comctl32_v6/button.c
 index 9128e523c..79e929682 100644
@@ -57,7 +58,7 @@ index 9128e523c..79e929682 100644
  
      GetClientRect(infoPtr->hwnd, &bgRect);
 diff --git a/dlls/m3.msstyles/m3.rc b/dlls/m3.msstyles/m3.rc
-index 5f0801edc..edbaad263 100644
+index 5f0801edc..ad9e29f84 100644
 --- a/dlls/m3.msstyles/m3.rc
 +++ b/dlls/m3.msstyles/m3.rc
 @@ -180,7 +180,7 @@ PURPLELIGHT_INI TEXTFILE
@@ -69,7 +70,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -3167,7 +3167,7 @@ PURPLEDARK_INI TEXTFILE
+@@ -3108,6 +3108,9 @@ PURPLELIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 29 27 32\r\n"
+ "Surface = 255 255 255 253 247 255\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Purple (dark) */
+@@ -3167,7 +3170,7 @@ PURPLEDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -78,7 +89,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -6154,7 +6154,7 @@ BLUELIGHT_INI TEXTFILE
+@@ -6095,6 +6098,9 @@ PURPLEDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 230 224 233\r\n"
+ "Surface = 255 255 255 20 18 24\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Blue (light) */
+@@ -6154,7 +6160,7 @@ BLUELIGHT_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -87,7 +108,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -9141,7 +9141,7 @@ BLUEDARK_INI TEXTFILE
+@@ -9082,6 +9088,9 @@ BLUELIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 26 27 32\r\n"
+ "Surface = 255 255 255 249 249 255\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Blue (dark) */
+@@ -9141,7 +9150,7 @@ BLUEDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -96,7 +127,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -12128,7 +12128,7 @@ TEALLIGHT_INI TEXTFILE
+@@ -12069,6 +12078,9 @@ BLUEDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 226 226 233\r\n"
+ "Surface = 255 255 255 17 19 24\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Teal (light) */
+@@ -12128,7 +12140,7 @@ TEALLIGHT_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -105,7 +146,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -15115,7 +15115,7 @@ TEALDARK_INI TEXTFILE
+@@ -15056,6 +15068,9 @@ TEALLIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 22 29 27\r\n"
+ "Surface = 255 255 255 244 251 248\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Teal (dark) */
+@@ -15115,7 +15130,7 @@ TEALDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -114,7 +165,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -18102,7 +18102,7 @@ GREENLIGHT_INI TEXTFILE
+@@ -18043,6 +18058,9 @@ TEALDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 221 228 225\r\n"
+ "Surface = 255 255 255 14 21 19\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Green (light) */
+@@ -18102,7 +18120,7 @@ GREENLIGHT_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -123,7 +184,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -21089,7 +21089,7 @@ GREENDARK_INI TEXTFILE
+@@ -21030,6 +21048,9 @@ GREENLIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 25 29 23\r\n"
+ "Surface = 255 255 255 247 251 241\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Green (dark) */
+@@ -21089,7 +21110,7 @@ GREENDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -132,7 +203,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -24076,7 +24076,7 @@ ORANGELIGHT_INI TEXTFILE
+@@ -24017,6 +24038,9 @@ GREENDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 224 228 219\r\n"
+ "Surface = 255 255 255 16 20 15\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Orange (light) */
+@@ -24076,7 +24100,7 @@ ORANGELIGHT_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -141,7 +222,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -27063,7 +27063,7 @@ ORANGEDARK_INI TEXTFILE
+@@ -27004,6 +27028,9 @@ ORANGELIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 34 26 21\r\n"
+ "Surface = 255 255 255 255 248 245\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Orange (dark) */
+@@ -27063,7 +27090,7 @@ ORANGEDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -150,7 +241,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -30050,7 +30050,7 @@ PINKLIGHT_INI TEXTFILE
+@@ -29991,6 +30018,9 @@ ORANGEDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 240 223 215\r\n"
+ "Surface = 255 255 255 25 18 13\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Pink (light) */
+@@ -30050,7 +30080,7 @@ PINKLIGHT_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -159,7 +260,17 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
-@@ -33037,7 +33037,7 @@ PINKDARK_INI TEXTFILE
+@@ -32978,6 +33008,9 @@ PINKLIGHT_INI TEXTFILE
+ "OnSurface = 0 0 0 34 25 27\r\n"
+ "Surface = 255 255 255 255 248 247\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* Pink (dark) */
+@@ -33037,7 +33070,7 @@ PINKDARK_INI TEXTFILE
  "\r\n"
  "[Button.Pushbutton]\r\n"
  "BgType = ImageFile\r\n"
@@ -168,6 +279,16 @@ index 5f0801edc..edbaad263 100644
  "SizingType = Stretch\r\n"
  "ContentMargins = 6, 6, 3, 3\r\n"
  "ImageFile = m3_button.bmp\r\n"
+@@ -35965,6 +35998,9 @@ PINKDARK_INI TEXTFILE
+ "OnSurface = 0 0 0 240 222 224\r\n"
+ "Surface = 255 255 255 25 17 19\r\n"
+ "\r\n"
++"[WineSizing]\r\n"
++"ScaleCorners = true\r\n"
++"\r\n"
+ }
+ 
+ /* @makedep: m3_button.bmp */
 diff --git a/dlls/m3.msstyles/m3_button.bmp b/dlls/m3.msstyles/m3_button.bmp
 index d82dbc2027bb97f9d8399aa243c7a45efe40a217..4d623b7ae49f042d3751483ad05bff53b9929c1c 100644
 GIT binary patch

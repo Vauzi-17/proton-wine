@@ -1,7 +1,7 @@
 From 0b25fa55f38ab3e3364fadda24850f02bf3a3ec9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 11:35:34 +0000
-Subject: [PATCH 12/18] win32u: Draw Material 3 menus.
+Subject: [PATCH 12/19] win32u: Draw Material 3 menus.
 
 With the Material 3 frames, menus get taller items with more room,
 rounded state layers in place of the highlight, disabled text at 38%

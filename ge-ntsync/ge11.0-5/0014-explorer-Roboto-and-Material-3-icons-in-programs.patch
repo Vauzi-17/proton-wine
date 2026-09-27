@@ -1,7 +1,7 @@
 From 58acc233a19edd09a32f68538921ed20febaa9c5 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 11:35:34 +0000
-Subject: [PATCH 14/18] explorer: Roboto and Material 3 icons in programs.
+Subject: [PATCH 14/19] explorer: Roboto and Material 3 icons in programs.
 
 With the Material 3 style, programs get Roboto for dialogs (the MS
 Shell Dlg substitutes) and for menus, status bars and message boxes,

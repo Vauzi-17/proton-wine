@@ -1,7 +1,7 @@
 From ac92ee3fc78bff1ec7d29acd5884a7c293091f44 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 09:49:59 +0000
-Subject: [PATCH 10/18] explorer: Use the Material 3 visual style for buttons
+Subject: [PATCH 10/19] explorer: Use the Material 3 visual style for buttons
  and controls.
 
 The Material 3 desktop style points the theme settings at m3.msstyles

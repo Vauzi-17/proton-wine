@@ -288,8 +288,8 @@ def draw_radiobutton(n):
     return c
 
 
-# frame size of the push button, SizingMargins 16: a pill up to 34 pixels high. On lower
-# buttons uxtheme keeps the ends of the arcs, which still meet at the middle of the sides.
+# frame size of the push button, SizingMargins 16: a pill up to 34 pixels high; on lower
+# buttons uxtheme shrinks the corners ([WineSizing] ScaleCorners)
 BUTTON = 34
 
 
@@ -806,6 +806,9 @@ def scheme_ini(sections, c):
     recolors = [[role.title().replace('_', ''), '%d %d %d %d %d %d' % (KEYS[role] + c[role])]
                 for role in KEYS]
     sections.append(['WineRecolor', recolors])
+    # uxtheme shrinks the corners of an image drawn smaller than its sizing margins instead of
+    # cutting them, so the pill buttons stay pills on low buttons
+    sections.append(['WineSizing', [['ScaleCorners', 'true']]])
     return sections
 
 

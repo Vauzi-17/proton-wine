@@ -18,9 +18,12 @@ arm64ec) with GameNative's userspace ntsync, the tree of the
   come out identical to proton-cachyos 11.
 - `0003`-`0017`: `cachyos-ntsync/p11/0003`-`0017`, unchanged: the Material 3
   desktop, programs, visual style, menus, fonts, icons and Files.
-- `0018`: pill push buttons (34 pixel images, SizingMargins 16), and the
-  focused push button shows the accent ring of the default button instead of
-  a dotted rectangle.
+- `0018`: uxtheme lets a theme shrink image corners instead of cutting them
+  when a control is smaller than the sizing margins (`[WineSizing]
+  ScaleCorners = true`); other themes draw as before.
+- `0019`: pill push buttons at any height (34 pixel images, SizingMargins 16,
+  ScaleCorners), and the focused push button shows the accent ring of the
+  default button instead of a dotted rectangle.
 
 After all the build-time Android patches, the Material 3 files are the same
 as in the proton-cachyos 11 build.

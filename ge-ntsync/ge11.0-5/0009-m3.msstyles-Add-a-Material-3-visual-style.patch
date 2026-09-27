@@ -1,7 +1,7 @@
 From 63aa38a918234941345a43fa75acfb43f2537e22 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 09:49:59 +0000
-Subject: [PATCH 09/18] m3.msstyles: Add a Material 3 visual style.
+Subject: [PATCH 09/19] m3.msstyles: Add a Material 3 visual style.
 
 Buttons, check boxes, radio buttons, edit and combo boxes, scroll bars,
 tabs, headers, toolbars, tree views, track bars, spin buttons and
