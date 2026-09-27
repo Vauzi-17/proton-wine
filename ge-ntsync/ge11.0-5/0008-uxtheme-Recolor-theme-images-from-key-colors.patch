@@ -1,0 +1,200 @@
+From cc06be4126496305298d60c911705055b29fdd3e Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 09:49:58 +0000
+Subject: [PATCH 08/18] uxtheme: Recolor theme images from key colors.
+
+Wine extension for themes with many color schemes: the [WineRecolor]
+section of a scheme's ini maps key colors to the scheme's colors, and
+32-bit images are recolored when they are loaded. Anti-aliased pixels,
+mixes of two key colors, become the same mix of the two colors, so one
+set of images serves all the schemes.
+---
+ dlls/uxtheme/msstyles.c | 123 ++++++++++++++++++++++++++++++++++++++++
+ dlls/uxtheme/msstyles.h |  12 ++++
+ 2 files changed, 135 insertions(+)
+
+diff --git a/dlls/uxtheme/msstyles.c b/dlls/uxtheme/msstyles.c
+index ed81369e4..7ad79f3f5 100644
+--- a/dlls/uxtheme/msstyles.c
++++ b/dlls/uxtheme/msstyles.c
+@@ -896,6 +896,29 @@ static void parse_apply_nonclient (struct PARSENONCLIENTSTATE* state)
+     }
+ }
+ 
++/* each value of [WineRecolor] is a key color and the color it stands for: "r g b r g b" */
++static void parse_recolors(PTHEME_FILE tf, PUXINI_FILE ini)
++{
++    LPCWSTR lpName, lpValue, lpValueEnd;
++    DWORD dwLen, dwValueLen;
++    int values[6], i;
++
++    tf->recolor_count = 0;
++    while((lpName=UXINI_GetNextValue(ini, &dwLen, &lpValue, &dwValueLen))) {
++        lpValueEnd = lpValue + dwValueLen;
++        for(i = 0; i < 6; i++) {
++            if(!MSSTYLES_GetNextInteger(lpValue, lpValueEnd, &lpValue, &values[i])) break;
++        }
++        if(i < 6 || tf->recolor_count >= MAX_THEME_RECOLORS) {
++            FIXME("Invalid or too many recolors: %s\n", debugstr_wn(lpName, dwLen));
++            continue;
++        }
++        tf->recolors[tf->recolor_count].key = RGB(values[0], values[1], values[2]);
++        tf->recolors[tf->recolor_count].color = RGB(values[3], values[4], values[5]);
++        tf->recolor_count++;
++    }
++}
++
+ /***********************************************************************
+  *      MSSTYLES_ParseThemeIni
+  *
+@@ -975,6 +998,10 @@ static void MSSTYLES_ParseThemeIni(PTHEME_FILE tf, BOOL setMetrics)
+ 	    }
+             continue;
+         }
++        if(CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE, lpName, dwLen, L"WineRecolor", -1) == CSTR_EQUAL) {
++            parse_recolors(tf, ini);
++            continue;
++        }
+         if(MSSTYLES_ParseIniSectionName(lpName, dwLen, szAppName, szClassName, &iPartId, &iStateId)) {
+             BOOL isGlobal = FALSE;
+             if(!lstrcmpiW(szClassName, L"globals")) {
+@@ -1306,6 +1333,101 @@ static BOOL prepare_alpha (HBITMAP bmp, BOOL* hasAlpha, BOOL *hasDefaultTranspar
+     return TRUE;
+ }
+ 
++/* distance of a color to the closest mix of the key colors from and to, and that mix */
++static float recolor_distance(const float *c, const float *from, const float *to, float *mix)
++{
++    float v[3], d[3], len = 0, t = 0, dist = 0;
++    int i;
++
++    for (i = 0; i < 3; i++)
++    {
++        v[i] = to[i] - from[i];
++        len += v[i] * v[i];
++        t += (c[i] - from[i]) * v[i];
++    }
++    t = len ? t / len : 0;
++    if (t < 0) t = 0;
++    if (t > 1) t = 1;
++    for (i = 0; i < 3; i++)
++    {
++        d[i] = c[i] - from[i] - t * v[i];
++        dist += d[i] * d[i];
++    }
++    *mix = t;
++    return dist;
++}
++
++/*
++ * Maps the pixels of a 32-bit image from the key colors of the theme to its colors. Anti-aliased
++ * pixels are mixes of two key colors, and become the same mix of the two colors.
++ */
++static void recolor_bitmap(const THEME_FILE *tf, HBITMAP bmp)
++{
++    struct { DWORD rgb, result; } cache[256];
++    float keys[MAX_THEME_RECOLORS][3], colors[MAX_THEME_RECOLORS][3];
++    UINT count = tf->recolor_count, i, j;
++    DIBSECTION dib;
++    BYTE *p, *end;
++
++    if (!bmp || GetObjectW(bmp, sizeof(dib), &dib) != sizeof(dib)) return;
++    if (dib.dsBm.bmBitsPixel != 32 || dib.dsBmih.biCompression != BI_RGB) return;
++    end = (BYTE *)dib.dsBm.bmBits + dib.dsBm.bmWidthBytes * dib.dsBm.bmHeight;
++
++    for (i = 0; i < count; i++)
++    {
++        keys[i][0] = GetRValue(tf->recolors[i].key);
++        keys[i][1] = GetGValue(tf->recolors[i].key);
++        keys[i][2] = GetBValue(tf->recolors[i].key);
++        colors[i][0] = GetRValue(tf->recolors[i].color);
++        colors[i][1] = GetGValue(tf->recolors[i].color);
++        colors[i][2] = GetBValue(tf->recolors[i].color);
++    }
++
++    memset(cache, 0xff, sizeof(cache));
++    for (p = dib.dsBm.bmBits; p < end; p += 4)
++    {
++        DWORD rgb = p[0] | (p[1] << 8) | (p[2] << 16), hash = (p[0] * 7 + p[1] * 3 + p[2]) & 0xff;
++        float c[3], best = 1e9, dist, mix, t = 0;
++        UINT from = 0, to = 0;
++
++        if (!p[3]) continue;
++        if (cache[hash].rgb != rgb)
++        {
++            c[0] = p[2];
++            c[1] = p[1];
++            c[2] = p[0];
++            for (i = 0; i < count; i++)
++            {
++                if ((dist = recolor_distance(c, keys[i], keys[i], &mix)) < best)
++                {
++                    best = dist;
++                    from = to = i;
++                    t = 0;
++                }
++            }
++            for (i = 0; best > 0 && i < count; i++)
++            {
++                for (j = i + 1; j < count; j++)
++                {
++                    if ((dist = recolor_distance(c, keys[i], keys[j], &mix)) < best)
++                    {
++                        best = dist;
++                        from = i;
++                        to = j;
++                        t = mix;
++                    }
++                }
++            }
++            for (i = 0; i < 3; i++) c[i] = colors[from][i] + t * (colors[to][i] - colors[from][i]) + 0.5f;
++            cache[hash].rgb = rgb;
++            cache[hash].result = (BYTE)c[2] | ((BYTE)c[1] << 8) | ((BYTE)c[0] << 16);
++        }
++        p[0] = cache[hash].result;
++        p[1] = cache[hash].result >> 8;
++        p[2] = cache[hash].result >> 16;
++    }
++}
++
+ HBITMAP MSSTYLES_LoadBitmap (PTHEME_CLASS tc, LPCWSTR lpFilename, BOOL* hasAlpha, BOOL *hasDefaultTransparentColour)
+ {
+     WCHAR szFile[MAX_PATH];
+@@ -1338,6 +1460,7 @@ HBITMAP MSSTYLES_LoadBitmap (PTHEME_CLASS tc, LPCWSTR lpFilename, BOOL* hasAlpha
+     /* Not found? Load from resources */
+     img = malloc(sizeof(*img));
+     img->image = LoadImageW(tc->hTheme, szFile, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
++    if (tc->tf->recolor_count) recolor_bitmap (tc->tf, img->image);
+     prepare_alpha (img->image, hasAlpha, &has_default);
+     img->hasAlpha = *hasAlpha;
+     img->hasDefaultTransparentColour = has_default;
+diff --git a/dlls/uxtheme/msstyles.h b/dlls/uxtheme/msstyles.h
+index 25380af40..9bde4d4f2 100644
+--- a/dlls/uxtheme/msstyles.h
++++ b/dlls/uxtheme/msstyles.h
+@@ -73,6 +73,15 @@ typedef struct _THEME_IMAGE {
+     struct _THEME_IMAGE *next;
+ } THEME_IMAGE, *PTHEME_IMAGE;
+ 
++/* Wine extension: the [WineRecolor] section of a color scheme maps key colors of its images
++ * to the colors of the scheme, so that one set of images serves all the schemes */
++#define MAX_THEME_RECOLORS 16
++
++typedef struct _THEME_RECOLOR {
++    COLORREF key;
++    COLORREF color;
++} THEME_RECOLOR;
++
+ typedef struct _THEME_FILE {
+     LONG refcount;
+     HMODULE hTheme;
+@@ -86,6 +95,9 @@ typedef struct _THEME_FILE {
+     PTHEME_CLASS classes;
+     PTHEME_PROPERTY metrics;
+     PTHEME_IMAGE images;
++
++    THEME_RECOLOR recolors[MAX_THEME_RECOLORS];
++    UINT recolor_count;
+ } THEME_FILE, *PTHEME_FILE;
+ 
+ typedef struct _UXINI_FILE *PUXINI_FILE;

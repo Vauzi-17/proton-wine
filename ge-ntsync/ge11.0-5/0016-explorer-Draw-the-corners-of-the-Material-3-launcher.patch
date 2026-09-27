@@ -1,0 +1,120 @@
+From 44296e8ef59ec64879a852988f890cc2d7fa6d58 Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 14:18:11 +0000
+Subject: [PATCH 16/18] explorer: Draw the corners of the Material 3 launcher
+ without a window region.
+
+X servers without the shape extension ignore window regions and showed
+the launcher as a square. The corners are painted with what is behind
+the launcher instead, the desktop and then each window from the bottom
+up, since not every X server returns the windows when reading the
+desktop.
+---
+ programs/explorer/m3launcher.c | 61 +++++++++++++++++++++++++++++-----
+ 1 file changed, 52 insertions(+), 9 deletions(-)
+
+diff --git a/programs/explorer/m3launcher.c b/programs/explorer/m3launcher.c
+index 0132a69a3..e84385220 100644
+--- a/programs/explorer/m3launcher.c
++++ b/programs/explorer/m3launcher.c
+@@ -413,24 +413,69 @@ static void draw_item( HDC hdc, const struct launcher_item *item, const struct m
+     }
+ }
+ 
++/*
++ * The window is square and its rounded corners show what is behind it: a window region
++ * needs the shape extension, which not every X server has. Reading the screen doesn't
++ * return the windows over the desktop with every X server either, so they are read one
++ * by one, from the bottom up. x and y are the position of the window, the parts are in
++ * screen coordinates.
++ */
++static void draw_backdrop( HDC hdc, int x, int y, const RECT *parts, unsigned int count )
++{
++    HWND windows[256], hwnd;
++    unsigned int i, window_count = 0;
++    RECT rect, part;
++    HDC src;
++
++    src = GetDC( 0 );
++    for (i = 0; i < count; i++)
++        BitBlt( hdc, parts[i].left - x, parts[i].top - y, parts[i].right - parts[i].left,
++                parts[i].bottom - parts[i].top, src, parts[i].left, parts[i].top, SRCCOPY );
++    ReleaseDC( 0, src );
++
++    for (hwnd = GetWindow( GetDesktopWindow(), GW_CHILD ); hwnd && window_count < ARRAY_SIZE(windows);
++         hwnd = GetWindow( hwnd, GW_HWNDNEXT ))
++        windows[window_count++] = hwnd;
++    while (window_count--)
++    {
++        hwnd = windows[window_count];
++        if (!IsWindowVisible( hwnd ) || IsIconic( hwnd ) || (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED))
++            continue;
++        GetWindowRect( hwnd, &rect );
++        for (i = 0; i < count; i++) if (IntersectRect( &part, &rect, &parts[i] )) break;
++        if (i == count || !(src = GetDCEx( hwnd, 0, DCX_WINDOW | DCX_CACHE ))) continue;
++        for (i = 0; i < count; i++)
++            if (IntersectRect( &part, &rect, &parts[i] ))
++                BitBlt( hdc, part.left - x, part.top - y, part.right - part.left, part.bottom - part.top,
++                        src, part.left - rect.left, part.top - rect.top, SRCCOPY );
++        ReleaseDC( hwnd, src );
++    }
++}
++
+ /* the sheet and the items */
+-static HBITMAP build_base( HDC ref, int width, int height )
++static HBITMAP build_base( HDC screen, int x, int y, int width, int height )
+ {
+     const struct m3_colors *colors = m3_get_colors();
+-    int avatar = px( 40 ), pad = px( 20 );
++    int avatar = px( 40 ), pad = px( 20 ), radius = px( 28 );
+     HGDIOBJ old, old_brush;
++    RECT rect, corners[4];
+     HBITMAP bitmap;
+     unsigned int i;
+-    RECT rect;
+     HDC hdc;
+ 
+-    if (!(hdc = CreateCompatibleDC( ref ))) return 0;
+-    bitmap = CreateCompatibleBitmap( ref, width, height );
++    if (!(hdc = CreateCompatibleDC( screen ))) return 0;
++    bitmap = CreateCompatibleBitmap( screen, width, height );
+     old = SelectObject( hdc, bitmap );
+     old_brush = SelectObject( hdc, GetStockObject( DC_BRUSH ));
+     SetDCBrushColor( hdc, colors->surface_container_high );
+     PatBlt( hdc, 0, 0, width, height, PATCOPY );
+     SelectObject( hdc, old_brush );
++    SetRect( &corners[0], x, y, x + radius, y + radius );
++    SetRect( &corners[1], x + width - radius, y, x + width, y + radius );
++    SetRect( &corners[2], x, y + height - radius, x + radius, y + height );
++    SetRect( &corners[3], x + width - radius, y + height - radius, x + width, y + height );
++    draw_backdrop( hdc, x, y, corners, ARRAY_SIZE(corners) );
++    m3_fill_round_rect( hdc, 0, 0, width, height, radius, colors->surface_container_high, 255 );
+ 
+     /* the user */
+     rect.left = sheet.left + pad;
+@@ -665,7 +710,7 @@ void do_m3_launcher( HWND tray )
+ {
+     static const WCHAR classW[] = L"__wine_m3_launcher";
+     static BOOL registered;
+-    int width, height, x, y, radius;
++    int width, height, x, y;
+     RECT tray_rect;
+     DWORD size;
+     MSG msg;
+@@ -699,15 +744,13 @@ void do_m3_launcher( HWND tray )
+     y = max( 0, tray_rect.top - px( 8 ) - height );
+ 
+     hdc = GetDC( 0 );
+-    launcher_base = build_base( hdc, width, height );
++    launcher_base = build_base( hdc, x, y, width, height );
+     ReleaseDC( 0, hdc );
+ 
+     launcher_window = CreateWindowExW( WS_EX_TOPMOST | WS_EX_TOOLWINDOW, classW, NULL, WS_POPUP,
+                                        x, y, width, height, tray, 0, 0, 0 );
+     if (launcher_window)
+     {
+-        radius = px( 28 );
+-        SetWindowRgn( launcher_window, CreateRoundRectRgn( 0, 0, width + 1, height + 1, 2 * radius, 2 * radius ), FALSE );
+         hot_item = pressed_item = selected_item = -1;
+         launcher_done = FALSE;
+         ShowWindow( launcher_window, SW_SHOWNORMAL );

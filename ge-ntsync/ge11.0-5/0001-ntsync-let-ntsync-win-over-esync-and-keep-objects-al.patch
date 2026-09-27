@@ -1,0 +1,566 @@
+From 654c31a84b2ae2dfc33dfa80f7d45b10f594a973 Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 12:52:24 +0000
+Subject: [PATCH 01/18] ntsync: let ntsync win over esync, and keep objects
+ alive while in use.
+
+The GE-Proton 11.0-5 ntsync build hung at a black desktop with esync on
+(Winlator's default): wineserver started esync and told clients so, but
+the object code still picked ntsync. The proton-cachyos 11 series fixed
+that and a lifetime bug; its ntsync patches produce the same
+server/inproc_sync.c, esync and ntdll sync code on this tree, so they
+replace the ones here:
+
+- wineserver only turns esync on when ntsync is not usable, and clients
+  follow wineserver's choice instead of reading WINEESYNC themselves;
+  PROTON_NO_NTSYNC=1 brings esync back.
+- closing the last handle to an object while another thread waits on it
+  no longer fails the wait, and abandoned mutexes are reported: the
+  reply carries a handle that keeps the object alive in the client.
+
+The build fails if any of these did not land.
+---
+ .../ntsync/dlls_ntdll_Makefile.in.patch       |  2 +-
+ .../ntsync/dlls_ntdll_unix_esync.c.patch      | 49 ++++++++++++
+ .../ntsync/dlls_ntdll_unix_server.c.patch     |  6 +-
+ .../ntsync/dlls_ntdll_unix_sync.c.patch       | 54 +++++++++++--
+ .../dlls_ntdll_unix_unix_private.h.patch      |  4 +-
+ .../patches/ntsync/server_Makefile.in.patch   |  2 +-
+ android/patches/ntsync/server_esync.c.patch   | 24 ++++++
+ .../patches/ntsync/server_inproc_sync.c.patch | 79 ++++++++++++++++---
+ android/patches/ntsync/server_process.c.patch |  4 +-
+ .../patches/ntsync/server_protocol.def.patch  | 12 +++
+ android/patches/ntsync/server_thread.c.patch  |  6 +-
+ build-scripts/build-step-arm64ec.sh           | 19 +++++
+ build-scripts/build-step0-autogen.sh          |  2 +
+ 13 files changed, 231 insertions(+), 32 deletions(-)
+ create mode 100644 android/patches/ntsync/dlls_ntdll_unix_esync.c.patch
+ create mode 100644 android/patches/ntsync/server_esync.c.patch
+ create mode 100644 android/patches/ntsync/server_protocol.def.patch
+
+diff --git a/android/patches/ntsync/dlls_ntdll_Makefile.in.patch b/android/patches/ntsync/dlls_ntdll_Makefile.in.patch
+index 6c637e674..f509d7067 100644
+--- a/android/patches/ntsync/dlls_ntdll_Makefile.in.patch
++++ b/android/patches/ntsync/dlls_ntdll_Makefile.in.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
+-index 2a7afcc..f5b2692 100644
++index 2a7afcc10..f5b26926c 100644
+ --- a/dlls/ntdll/Makefile.in
+ +++ b/dlls/ntdll/Makefile.in
+ @@ -5,7 +5,7 @@ IMPORTLIB = ntdll
+diff --git a/android/patches/ntsync/dlls_ntdll_unix_esync.c.patch b/android/patches/ntsync/dlls_ntdll_unix_esync.c.patch
+new file mode 100644
+index 000000000..a72a8a9b8
+--- /dev/null
++++ b/android/patches/ntsync/dlls_ntdll_unix_esync.c.patch
+@@ -0,0 +1,49 @@
++diff --git a/dlls/ntdll/unix/esync.c b/dlls/ntdll/unix/esync.c
++index 202e945b9..4ac8116b8 100644
++--- a/dlls/ntdll/unix/esync.c
+++++ b/dlls/ntdll/unix/esync.c
++@@ -54,15 +54,21 @@
++ 
++ WINE_DEFAULT_DEBUG_CHANNEL(esync);
++ 
+++/* Set by esync_init() once wineserver reports ESYNC_USED_BY_SERVER in the
+++ * init_first_thread reply. wineserver makes the choice (ntsync wins over
+++ * esync), so WINEESYNC alone must not turn esync on here: that made the
+++ * client take esync paths while the server was using ntsync. */
+++static int esync_enabled;
+++
+++static int esync_requested(void)
+++{
+++    return getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync();
+++}
+++
++ int do_esync(void)
++ {
++ #ifdef HAVE_SYS_EVENTFD_H
++-    static int do_esync_cached = -1;
++-
++-    if (do_esync_cached == -1)
++-        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync();
++-
++-    return do_esync_cached;
+++    return esync_enabled;
++ #else
++     static int once;
++     if (!once++)
++@@ -1246,7 +1252,7 @@ NTSTATUS esync_signal_and_wait( HANDLE signal, HANDLE wait, BOOLEAN alertable,
++ 
++ void esync_init(int fd)
++ {
++-    if (!do_esync())
+++    if (!esync_requested())
++     {
++         /* make sure the server isn't running without WINEESYNC */
++         HANDLE handle;
++@@ -1263,6 +1269,7 @@ void esync_init(int fd)
++     }
++ 
++     shm_fd = fd;
+++    esync_enabled = 1;
++ 
++     pagesize = sysconf( _SC_PAGESIZE );
++ 
+diff --git a/android/patches/ntsync/dlls_ntdll_unix_server.c.patch b/android/patches/ntsync/dlls_ntdll_unix_server.c.patch
+index 3641495d3..7e9552111 100644
+--- a/android/patches/ntsync/dlls_ntdll_unix_server.c.patch
++++ b/android/patches/ntsync/dlls_ntdll_unix_server.c.patch
+@@ -1,8 +1,8 @@
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+-index f11f749..bb73da2 100644
++index b6dd623f9..8bd2bacb7 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -83,6 +83,10 @@
++@@ -87,6 +87,10 @@
+  
+  #include "fsync.h"
+  
+@@ -13,7 +13,7 @@ index f11f749..bb73da2 100644
+  WINE_DEFAULT_DEBUG_CHANNEL(server);
+  WINE_DECLARE_DEBUG_CHANNEL(syscall);
+  WINE_DECLARE_DEBUG_CHANNEL(client);
+-@@ -1715,6 +1719,17 @@ size_t server_init_process(void)
++@@ -1758,6 +1762,17 @@ size_t server_init_process(void)
+                  int shm_fd = wine_server_receive_fd( &handle );
+                  esync_init( shm_fd );
+              }
+diff --git a/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch b/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
+index 6cfd3dfff..cd7f2209a 100644
+--- a/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
++++ b/android/patches/ntsync/dlls_ntdll_unix_sync.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+-index 2bf677a..b01b97a 100644
++index bba8f8a74..e3b79be9d 100644
+ --- a/dlls/ntdll/unix/sync.c
+ +++ b/dlls/ntdll/unix/sync.c
+ @@ -61,7 +61,14 @@
+@@ -276,26 +276,66 @@ index 2bf677a..b01b97a 100644
+      }
+      else if (timeout->QuadPart <= 0)
+      {
+-@@ -637,7 +816,12 @@ static void release_inproc_sync( struct inproc_sync *sync )
++@@ -543,6 +722,7 @@ struct inproc_sync
++     unsigned int   access;    /* handle access rights */
++     unsigned short type;      /* enum inproc_sync_type as short to save space */
++     unsigned short closed;    /* fd has been closed but sync is still referenced */
+++    obj_handle_t   handle;    /* userspace ntsync: server handle keeping the object alive */
++ };
++ 
++ #define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync))
++@@ -602,6 +782,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++     }
++ 
++     cache->fd = sync->fd;
+++    cache->handle = sync->handle;
++     cache->access = sync->access;
++     cache->type = sync->type;
++     cache->closed = sync->closed;
++@@ -634,10 +815,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
++     /* save the fd now; as soon as the refcount hits 0 we cannot
++      * access the cache anymore */
++     int fd = sync->fd;
+++#ifdef __ANDROID__
+++    obj_handle_t handle = sync->handle;
+++#endif
+      LONG ref = InterlockedDecrement( &sync->refcount );
+  
+      assert( ref >= 0 );
+ +#ifdef __ANDROID__
+-+    /* userspace ntsync objects are owned by the server; nothing to close */
+-+    if (!ref && !ntsync_userspace) close( fd );
+++    /* userspace ntsync objects are owned by the server: drop the handle that
+++     * kept this one alive. Not NtClose(), we may hold fd_cache_mutex here. */
+++    if (!ref && ntsync_userspace)
+++    {
+++        if (handle)
+++        {
+++            SERVER_START_REQ( close_handle )
+++            {
+++                req->handle = handle;
+++                wine_server_call( req );
+++            }
+++            SERVER_END_REQ;
+++        }
+++    }
+++    else if (!ref) close( fd );
+ +#else
+      if (!ref) close( fd );
+ +#endif
+  }
+  
+  static struct inproc_sync *get_cached_inproc_sync( HANDLE handle )
+-@@ -678,8 +862,18 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
++@@ -678,8 +880,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
+          {
+              obj_handle_t fd_handle;
+              sync->refcount = 1;
+++            sync->handle = 0;
+ +#ifdef __ANDROID__
+ +            /* userspace ntsync object handle is passed in sync_shm_idx */
+-+            if (ntsync_userspace) sync->fd = reply->sync_shm_idx;
+++            if (ntsync_userspace)
+++            {
+++                sync->fd = reply->sync_shm_idx;
+++                sync->handle = reply->sync_handle;
+++            }
+ +            else
+ +            {
+ +                sync->fd = wine_server_receive_fd( &fd_handle );
+@@ -308,7 +348,7 @@ index 2bf677a..b01b97a 100644
+              sync->access = reply->access;
+              sync->type = reply->type;
+              sync->closed = 0;
+-@@ -922,6 +1116,10 @@ int get_inproc_alert_fd(void)
++@@ -922,6 +1139,10 @@ int get_inproc_alert_fd(void)
+              if (!server_call_unlocked( req ))
+              {
+                  if (do_fsync()) data->alert_fd = fd = reply->sync_shm_idx;
+diff --git a/android/patches/ntsync/dlls_ntdll_unix_unix_private.h.patch b/android/patches/ntsync/dlls_ntdll_unix_unix_private.h.patch
+index ebfdcd5bf..b2b85a44b 100644
+--- a/android/patches/ntsync/dlls_ntdll_unix_unix_private.h.patch
++++ b/android/patches/ntsync/dlls_ntdll_unix_unix_private.h.patch
+@@ -1,8 +1,8 @@
+ diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+-index 2cdfcee..74a83dc 100644
++index 4436c969d..abad6d00a 100644
+ --- a/dlls/ntdll/unix/unix_private.h
+ +++ b/dlls/ntdll/unix/unix_private.h
+-@@ -203,6 +203,10 @@ extern BOOL terminate_process_running;
++@@ -204,6 +204,10 @@ extern BOOL terminate_process_running;
+  extern LONG terminate_process_exit_code;
+  extern HANDLE keyed_event;
+  extern int inproc_device_fd;
+diff --git a/android/patches/ntsync/server_Makefile.in.patch b/android/patches/ntsync/server_Makefile.in.patch
+index be1091a07..d77867e4f 100644
+--- a/android/patches/ntsync/server_Makefile.in.patch
++++ b/android/patches/ntsync/server_Makefile.in.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/Makefile.in b/server/Makefile.in
+-index 4934d9f..4b6835a 100644
++index 4934d9fd3..4b6835a9b 100644
+ --- a/server/Makefile.in
+ +++ b/server/Makefile.in
+ @@ -53,6 +53,6 @@ SOURCES = \
+diff --git a/android/patches/ntsync/server_esync.c.patch b/android/patches/ntsync/server_esync.c.patch
+new file mode 100644
+index 000000000..097570d1a
+--- /dev/null
++++ b/android/patches/ntsync/server_esync.c.patch
+@@ -0,0 +1,24 @@
++diff --git a/server/esync.c b/server/esync.c
++index 12f07ab7b..b52559ed2 100644
++--- a/server/esync.c
+++++ b/server/esync.c
++@@ -57,13 +57,18 @@ static int create_memfd(const char *name)
++ }
++ #endif
++ 
+++/* from inproc_sync.c */
+++extern int ntsync_available(void);
+++
++ int do_esync(void)
++ {
++ #ifdef HAVE_SYS_EVENTFD_H
++     static int do_esync_cached = -1;
++ 
+++    /* ntsync wins: with both on, objects went through esync while clients
+++     * were told the server used ntsync. PROTON_NO_NTSYNC=1 gets esync back. */
++     if (do_esync_cached == -1)
++-        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync();
+++        do_esync_cached = getenv("WINEESYNC") && atoi(getenv("WINEESYNC")) && !do_fsync() && !ntsync_available();
++ 
++     return do_esync_cached;
++ #else
+diff --git a/android/patches/ntsync/server_inproc_sync.c.patch b/android/patches/ntsync/server_inproc_sync.c.patch
+index b3163e558..5905014ff 100644
+--- a/android/patches/ntsync/server_inproc_sync.c.patch
++++ b/android/patches/ntsync/server_inproc_sync.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+-index 497e9a9..5282199 100644
++index 497e9a94f..39dc25a63 100644
+ --- a/server/inproc_sync.c
+ +++ b/server/inproc_sync.c
+ @@ -37,7 +37,14 @@
+@@ -17,10 +17,11 @@ index 497e9a9..5282199 100644
+  
+  #ifdef HAVE_SYS_EVENTFD_H
+  #include <sys/eventfd.h>
+-@@ -50,18 +57,89 @@
++@@ -50,20 +57,113 @@
+  #include <sys/stat.h>
+  #include <unistd.h>
+  
++-int get_inproc_device_fd(void)
+ +#ifdef __ANDROID__
+ +static int ntsync_userspace;  /* 1 when using libntsync_android instead of /dev/ntsync */
+ +
+@@ -51,7 +52,10 @@ index 497e9a9..5282199 100644
+ +}
+ +#endif  /* __ANDROID__ */
+ +
+- int get_inproc_device_fd(void)
+++/* Probe ntsync on its own, kernel driver first, then userspace on Android.
+++ * Kept apart from get_inproc_device_fd() so do_esync() can ask whether
+++ * ntsync is usable without recursing into the esync fallback below. */
+++static int get_ntsync_device_fd(void)
+  {
+      static int fd = -2;
+      if (fd == -2)
+@@ -96,7 +100,7 @@ index 497e9a9..5282199 100644
+ +        }
+          if (fd >= 0)
+          {
+-             do_fsync_cached = 0;
++-            do_fsync_cached = 0;
+ +#ifdef __ANDROID__
+ +            if (ntsync_userspace)
+ +                fprintf( stderr, force_userspace
+@@ -106,8 +110,30 @@ index 497e9a9..5282199 100644
+ +#endif
+              fprintf( stderr, "ntsync: up and running.\n" );
+          }
+++    }
+++    return fd;
+++}
+++
+++/* ntsync takes precedence over esync. wineserver used to enable esync
+++ * whenever WINEESYNC=1 and still pick ntsync here, so objects went through
+++ * the esync paths while clients were told about ntsync, which hung the
+++ * prefix at startup (Winlator turns WINEESYNC on by default). */
+++int ntsync_available(void)
+++{
+++    return get_ntsync_device_fd() >= 0;
+++}
+++
+++int get_inproc_device_fd(void)
+++{
+++    static int fd = -2;
+++    if (fd == -2)
+++    {
+++        if ((fd = get_ntsync_device_fd()) >= 0)
+++            do_fsync_cached = 0;
+          else if (do_fsync()) fd = FSYNC_USED_BY_SERVER;
+-@@ -142,6 +220,10 @@ struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
++         else if (do_esync())
++         {
++@@ -142,6 +242,10 @@ struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
+      else
+      {
+          event->type = INPROC_SYNC_INTERNAL;
+@@ -118,7 +144,7 @@ index 497e9a9..5282199 100644
+          event->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
+      }
+      list_init( &event->entry );
+-@@ -175,6 +257,10 @@ struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
++@@ -175,6 +279,10 @@ struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
+      else
+      {
+          event->type = INPROC_SYNC_EVENT;
+@@ -129,7 +155,7 @@ index 497e9a9..5282199 100644
+          event->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
+      }
+      list_init( &event->entry );
+-@@ -208,6 +294,10 @@ struct inproc_sync *create_inproc_mutex_sync( thread_id_t owner, unsigned int co
++@@ -208,6 +316,10 @@ struct inproc_sync *create_inproc_mutex_sync( thread_id_t owner, unsigned int co
+      else
+      {
+          mutex->type = INPROC_SYNC_MUTEX;
+@@ -140,7 +166,7 @@ index 497e9a9..5282199 100644
+          mutex->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_MUTEX, &args );
+      }
+      list_add_tail( &inproc_mutexes, &mutex->entry );
+-@@ -242,6 +332,10 @@ struct inproc_sync *create_inproc_semaphore_sync( unsigned int initial, unsigned
++@@ -242,6 +354,10 @@ struct inproc_sync *create_inproc_semaphore_sync( unsigned int initial, unsigned
+      else
+      {
+          sem->type = INPROC_SYNC_SEMAPHORE;
+@@ -151,7 +177,7 @@ index 497e9a9..5282199 100644
+          sem->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_SEM, &args );
+      }
+      list_init( &sem->entry );
+-@@ -264,20 +358,26 @@ static void inproc_sync_dump( struct object *obj, int verbose )
++@@ -264,20 +380,26 @@ static void inproc_sync_dump( struct object *obj, int verbose )
+  
+  void signal_inproc_sync( struct inproc_sync *sync )
+  {
+@@ -180,7 +206,7 @@ index 497e9a9..5282199 100644
+      else
+          ioctl( sync->fd, NTSYNC_IOC_EVENT_RESET, &count );
+  }
+-@@ -302,6 +402,9 @@ static void inproc_sync_destroy( struct object *obj )
++@@ -302,6 +424,9 @@ static void inproc_sync_destroy( struct object *obj )
+      assert( obj->ops == &inproc_sync_ops );
+      list_remove( &sync->entry );
+      if (do_fsync()) fsync_free_shm_idx( sync->fd );
+@@ -190,7 +216,7 @@ index 497e9a9..5282199 100644
+      else            close( sync->fd );
+  }
+  
+-@@ -322,7 +425,13 @@ void abandon_inproc_mutexes( thread_id_t tid )
++@@ -322,7 +447,13 @@ void abandon_inproc_mutexes( thread_id_t tid )
+      }
+  
+      LIST_FOR_EACH_ENTRY( mutex, &inproc_mutexes, struct inproc_sync, entry )
+@@ -204,13 +230,40 @@ index 497e9a9..5282199 100644
+  }
+  
+  static int get_obj_inproc_sync( struct object *obj, int *type, unsigned int *esync_shm_idx )
+-@@ -409,6 +518,10 @@ DECL_HANDLER(get_inproc_sync_fd)
++@@ -345,6 +476,11 @@ static int get_obj_inproc_sync( struct object *obj, int *type, unsigned int *esy
++ 
++ #else /* NTSYNC_IOC_EVENT_READ */
++ 
+++int ntsync_available(void)
+++{
+++    return 0;
+++}
+++
++ int get_inproc_device_fd(void)
++ {
++     return -1;
++@@ -409,6 +545,25 @@ DECL_HANDLER(get_inproc_sync_fd)
+          reply->sync_shm_idx = esync_shm_idx;
+          send_client_fd( current->process, fd, req->handle );
+      }
+ +#ifdef __ANDROID__
+ +    /* userspace ntsync object handle; valid in every process */
+-+    else if (ntsync_userspace) reply->sync_shm_idx = fd;
+++    else if (ntsync_userspace)
+++    {
+++        struct object *sync = get_obj_sync( obj );
+++
+++        reply->sync_shm_idx = fd;
+++        /* A kernel ntsync fd keeps the object alive in the client. A userspace
+++         * handle does not, so give the client a handle to the server object
+++         * instead, which it closes once it stops using the object. Without it,
+++         * closing the last handle while another thread waits destroyed the
+++         * object: the wait failed, and an abandoned mutex was never reported. */
+++        if (sync)
+++        {
+++            reply->sync_handle = alloc_handle_no_access_check( current->process, sync, 0, 0 );
+++            release_object( sync );
+++        }
+++    }
+ +#endif
+      else
+          send_client_fd( current->process, fd, req->handle );
+diff --git a/android/patches/ntsync/server_process.c.patch b/android/patches/ntsync/server_process.c.patch
+index 7c2498149..fa22fc8c4 100644
+--- a/android/patches/ntsync/server_process.c.patch
++++ b/android/patches/ntsync/server_process.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/process.c b/server/process.c
+-index 287718a..0aa6b0c 100644
++index 20718ec0a..5168a2169 100644
+ --- a/server/process.c
+ +++ b/server/process.c
+ @@ -67,6 +67,12 @@
+@@ -15,7 +15,7 @@ index 287718a..0aa6b0c 100644
+  /* process object */
+  
+  static struct list process_list = LIST_INIT(process_list);
+-@@ -822,6 +828,12 @@ static void process_destroy( struct object *obj )
++@@ -825,6 +831,12 @@ static void process_destroy( struct object *obj )
+      if (process->token) release_object( process->token );
+      if (process->sync) release_object( process->sync );
+      if (do_fsync()) fsync_cleanup_process_shm_indices( process->id );
+diff --git a/android/patches/ntsync/server_protocol.def.patch b/android/patches/ntsync/server_protocol.def.patch
+new file mode 100644
+index 000000000..279218226
+--- /dev/null
++++ b/android/patches/ntsync/server_protocol.def.patch
+@@ -0,0 +1,12 @@
++diff --git a/server/protocol.def b/server/protocol.def
++index 7ebe0315a..f4da63ddb 100644
++--- a/server/protocol.def
+++++ b/server/protocol.def
++@@ -4256,6 +4256,7 @@ enum inproc_sync_type
++     int           type;         /* inproc sync type */
++     unsigned int access;        /* handle access rights */
++     unsigned int sync_shm_idx;
+++    obj_handle_t sync_handle;   /* userspace ntsync: handle keeping the object alive */
++ @END
++ 
++ 
+diff --git a/android/patches/ntsync/server_thread.c.patch b/android/patches/ntsync/server_thread.c.patch
+index da3f77854..bfb85eb40 100644
+--- a/android/patches/ntsync/server_thread.c.patch
++++ b/android/patches/ntsync/server_thread.c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/thread.c b/server/thread.c
+-index 1938eb7..5fa1520 100644
++index 3d04e0868..de2756cf2 100644
+ --- a/server/thread.c
+ +++ b/server/thread.c
+ @@ -65,6 +65,12 @@
+@@ -15,7 +15,7 @@ index 1938eb7..5fa1520 100644
+  /* thread queues */
+  
+  struct thread_wait
+-@@ -1835,8 +1841,17 @@ DECL_HANDLER(init_first_thread)
++@@ -1838,8 +1844,17 @@ DECL_HANDLER(init_first_thread)
+      }
+      else if ((fd = get_inproc_device_fd()) >= 0)
+      {
+@@ -35,7 +35,7 @@ index 1938eb7..5fa1520 100644
+      }
+  }
+  
+-@@ -2476,6 +2491,10 @@ DECL_HANDLER(get_inproc_alert_fd)
++@@ -2491,6 +2506,10 @@ DECL_HANDLER(get_inproc_alert_fd)
+  
+      if ((fd = get_inproc_sync_fd( current->alert_sync )) < 0) set_error( STATUS_INVALID_PARAMETER );
+      else if (do_fsync()) reply->sync_shm_idx = fd;
+diff --git a/build-scripts/build-step-arm64ec.sh b/build-scripts/build-step-arm64ec.sh
+index c2f9b87a9..7ed9dea54 100755
+--- a/build-scripts/build-step-arm64ec.sh
++++ b/build-scripts/build-step-arm64ec.sh
+@@ -293,6 +293,10 @@ do
+       "ntsync/dlls_ntdll_unix_unix_private.h.patch"
+       "ntsync/dlls_ntdll_unix_sync.c.patch"
+       "ntsync/dlls_ntdll_unix_server.c.patch"
++      # ntsync wins over esync: wineserver only turns esync on when ntsync is
++      # not usable, and clients follow what wineserver chose
++      "ntsync/server_esync.c.patch"
++      "ntsync/dlls_ntdll_unix_esync.c.patch"
+     )
+ 
+     for patch in "${PATCHES[@]}"; do
+@@ -320,6 +324,21 @@ do
+     done
+     echo "userspace ntsync: patches verified present"
+ 
++    # ntsync wins over esync (WINEESYNC=1 used to hang the prefix at a black
++    # desktop), and objects stay alive while a client waits on them.
++    for row in \
++      "server/esync.c|!ntsync_available()|ntsync takes precedence over esync (wineserver)" \
++      "dlls/ntdll/unix/esync.c|esync_enabled = 1;|client esync follows wineserver's choice" \
++      "server/inproc_sync.c|reply->sync_handle = alloc_handle_no_access_check|ntsync objects stay alive (wineserver)" \
++      "dlls/ntdll/unix/sync.c|sync->handle = reply->sync_handle;|ntsync objects stay alive (client)"; do
++      m_file="${row%%|*}"; rest="${row#*|}"; m_token="${rest%%|*}"; m_what="${rest#*|}"
++      if ! grep -qF -- "$m_token" "$m_file"; then
++        echo "FATAL: $m_what did not apply to $m_file" >&2
++        exit 1
++      fi
++      echo "  ok    $m_what"
++    done
++
+     echo "----------------------------------------"
+     echo "Done applying patches."
+ 
+diff --git a/build-scripts/build-step0-autogen.sh b/build-scripts/build-step0-autogen.sh
+index 4aeba8265..ba281ed82 100644
+--- a/build-scripts/build-step0-autogen.sh
++++ b/build-scripts/build-step0-autogen.sh
+@@ -1,3 +1,5 @@
+ #!/bin/sh
+ git apply "./android/patches/server_protocol.def.patch"
++# userspace ntsync: reply field that keeps objects alive in clients
++git apply "./android/patches/ntsync/server_protocol.def.patch"
+ ./autogen.sh

@@ -1,0 +1,482 @@
+From 0b25fa55f38ab3e3364fadda24850f02bf3a3ec9 Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 11:35:34 +0000
+Subject: [PATCH 12/18] win32u: Draw Material 3 menus.
+
+With the Material 3 frames, menus get taller items with more room,
+rounded state layers in place of the highlight, disabled text at 38%
+instead of the embossed gray, anti-aliased check marks, radio dots and
+submenu arrows, shortcuts on the right, inset separators and a thin
+outline. The menu bar takes the color of the title bar. Menus with
+their own background brush and owner-drawn items stay as they are.
+---
+ dlls/win32u/defwnd.c         |  81 ++++++++++-
+ dlls/win32u/menu.c           | 251 ++++++++++++++++++++++++++++++++++-
+ dlls/win32u/win32u_private.h |  12 ++
+ 3 files changed, 335 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/win32u/defwnd.c b/dlls/win32u/defwnd.c
+index 16b5782de..23d85bdd0 100644
+--- a/dlls/win32u/defwnd.c
++++ b/dlls/win32u/defwnd.c
+@@ -1809,7 +1809,30 @@ static const struct m3_frame_colors *get_m3_window_colors( HWND hwnd, DWORD styl
+     return get_m3_frame_colors( (win_get_flags( hwnd ) & WIN_NCACTIVATED) != 0 );
+ }
+ 
+-static COLORREF m3_mix( COLORREF base, COLORREF over, float amount )
++/* Material 3 menus go with the Material 3 frames; a menu bar takes the color of its title bar */
++BOOL get_m3_menu_colors( HWND hwnd, struct m3_menu_colors *colors )
++{
++    const struct m3_frame_colors *frame;
++    const COLORREF *pal;
++    BOOL dark;
++
++    if (!(frame = get_m3_frame_colors( hwnd && (win_get_flags( hwnd ) & WIN_NCACTIVATED) ))) return FALSE;
++    if (m3_frame_mode) dark = m3_frame_mode == 2;
++    else
++    {
++        COLORREF window = get_sys_color( COLOR_WINDOW );
++        dark = (GetRValue(window) * 299 + GetGValue(window) * 587 + GetBValue(window) * 114) / 1000 < 128;
++    }
++    pal = m3_frame_palette[m3_frame_accent][dark];
++    colors->back = pal[0];
++    colors->bar = frame->bar;
++    colors->text = pal[2];
++    colors->variant = pal[3];
++    colors->outline = pal[4];
++    return TRUE;
++}
++
++COLORREF m3_mix( COLORREF base, COLORREF over, float amount )
+ {
+     return RGB( GetRValue(base) + (GetRValue(over) - GetRValue(base)) * amount,
+                 GetGValue(base) + (GetGValue(over) - GetGValue(base)) * amount,
+@@ -1822,7 +1845,7 @@ static float m3_clamp( float value )
+ }
+ 
+ /* coverage of a pixel center by a stroke along the segment (x1,y1)-(x2,y2) */
+-static float m3_segment_cover( float px, float py, float x1, float y1, float x2, float y2, float half )
++float m3_segment_cover( float px, float py, float x1, float y1, float x2, float y2, float half )
+ {
+     float dx = x2 - x1, dy = y2 - y1, len = dx * dx + dy * dy, t = 0, ex, ey;
+ 
+@@ -1840,6 +1863,60 @@ static float m3_square_cover( float px, float py, float cx, float cy, float r, f
+     return m3_clamp( half + 0.5f - fabsf( d - r ));
+ }
+ 
++/* anti-aliased strokes over a solid background, drawn pixel by pixel in box:
++ * count segments of 4 floats (x1, y1, x2, y2), relative to the box */
++void m3_draw_strokes( HDC hdc, const RECT *box, const float *segments, int count, float width,
++                      COLORREF back, COLORREF color )
++{
++    int x, y, i;
++
++    for (y = box->top; y < box->bottom; y++)
++    {
++        for (x = box->left; x < box->right; x++)
++        {
++            float px = x - box->left + 0.5f, py = y - box->top + 0.5f, cover = 0;
++
++            for (i = 0; i < count; i++)
++                cover = fmaxf( cover, m3_segment_cover( px, py, segments[4 * i], segments[4 * i + 1],
++                                                        segments[4 * i + 2], segments[4 * i + 3], width / 2 ));
++            if (cover > 0) NtGdiSetPixel( hdc, x, y, m3_mix( back, color, cover ));
++        }
++    }
++}
++
++/* an anti-aliased rounded rectangle over a solid background */
++void m3_fill_round_rect( HDC hdc, const RECT *rect, int radius, COLORREF back, COLORREF color )
++{
++    int width = rect->right - rect->left, height = rect->bottom - rect->top, x, y;
++    HBRUSH brush = NtGdiCreateSolidBrush( color, NULL );
++    RECT rc;
++
++    radius = min( radius, min( width, height ) / 2 );
++    SetRect( &rc, rect->left + radius, rect->top, rect->right - radius, rect->bottom );
++    fill_rect( hdc, &rc, brush );
++    SetRect( &rc, rect->left, rect->top + radius, rect->right, rect->bottom - radius );
++    fill_rect( hdc, &rc, brush );
++    NtGdiDeleteObjectApp( brush );
++
++    /* the corners */
++    for (y = 0; y < radius; y++)
++    {
++        for (x = 0; x < radius; x++)
++        {
++            float dx = radius - (x + 0.5f), dy = radius - (y + 0.5f);
++            float cover = m3_clamp( radius + 0.5f - sqrtf( dx * dx + dy * dy ));
++            COLORREF pixel;
++
++            if (cover <= 0) continue;
++            pixel = m3_mix( back, color, cover );
++            NtGdiSetPixel( hdc, rect->left + x, rect->top + y, pixel );
++            NtGdiSetPixel( hdc, rect->right - 1 - x, rect->top + y, pixel );
++            NtGdiSetPixel( hdc, rect->left + x, rect->bottom - 1 - y, pixel );
++            NtGdiSetPixel( hdc, rect->right - 1 - x, rect->bottom - 1 - y, pixel );
++        }
++    }
++}
++
+ /* draw a caption button: a flat box with an anti-aliased glyph, red when the close button is pushed */
+ static void m3_draw_caption_button( HDC hdc, const RECT *rect, UINT flags, const struct m3_frame_colors *colors,
+                                     UINT dpi )
+diff --git a/dlls/win32u/menu.c b/dlls/win32u/menu.c
+index dda7d119e..be26a0937 100644
+--- a/dlls/win32u/menu.c
++++ b/dlls/win32u/menu.c
+@@ -2146,9 +2146,206 @@ static void calc_menu_item_size( HDC hdc, struct menu_item *item, HWND owner, IN
+     TRACE( "%s\n", wine_dbgstr_rect( &item->rect ));
+ }
+ 
++/*
++ * Material 3 menus, with the Material 3 style of the explorer desktop: taller items with
++ * more room, rounded state layers instead of the highlight, anti-aliased check marks and
++ * arrows, a menu bar in the color of the title bar.
++ */
++
++static int m3_px( int value )
++{
++    return value * (int)get_system_dpi() / 96;
++}
++
++/* the room and height of a popup menu item */
++static void m3_popup_item_size( struct menu_item *item )
++{
++    int height = item->rect.bottom - item->rect.top;
++
++    if (item->fType & MF_OWNERDRAW) return;
++    if (item->fType & MF_SEPARATOR) height = m3_px( 9 );
++    else
++    {
++        height = max( height, m3_px( 32 ));
++        item->rect.right += m3_px( 24 );
++    }
++    item->rect.bottom = item->rect.top + height;
++}
++
++static void m3_draw_check( HDC hdc, const RECT *rect, BOOL radio, COLORREF back, COLORREF color )
++{
++    int size = min( rect->right - rect->left, rect->bottom - rect->top );
++    RECT box;
++
++    SetRect( &box, rect->left, (rect->top + rect->bottom - size) / 2, rect->left + size,
++             (rect->top + rect->bottom + size) / 2 );
++    if (radio)
++    {
++        InflateRect( &box, -size * 5 / 16, -size * 5 / 16 );
++        m3_fill_round_rect( hdc, &box, size, back, color );
++    }
++    else
++    {
++        float s = size / 16.0f;
++        float check[8] = { 3 * s, 8.5f * s, 6.5f * s, 12 * s, 6.5f * s, 12 * s, 13 * s, 4.5f * s };
++
++        m3_draw_strokes( hdc, &box, check, 2, max( 1.5f, 1.6f * s ), back, color );
++    }
++}
++
++static void m3_draw_arrow( HDC hdc, const RECT *rect, COLORREF back, COLORREF color )
++{
++    int size = m3_px( 16 );
++    float s = size / 16.0f;
++    float arrow[8] = { 6 * s, 4 * s, 10 * s, 8 * s, 10 * s, 8 * s, 6 * s, 12 * s };
++    RECT box;
++
++    SetRect( &box, rect->right - m3_px( 12 ) - size, (rect->top + rect->bottom - size) / 2,
++             rect->right - m3_px( 12 ), (rect->top + rect->bottom + size) / 2 );
++    m3_draw_strokes( hdc, &box, arrow, 2, max( 1.5f, 1.5f * s ), back, color );
++}
++
++static void m3_fill( HDC hdc, const RECT *rect, COLORREF color )
++{
++    HBRUSH brush = NtGdiCreateSolidBrush( color, NULL );
++
++    fill_rect( hdc, rect, brush );
++    NtGdiDeleteObjectApp( brush );
++}
++
++static void draw_bitmap_item( HWND hwnd, HDC hdc, struct menu_item *item, const RECT *rect,
++                              struct menu *menu, HWND owner, UINT odaction );
++
++static void m3_draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc, struct menu_item *item,
++                               BOOL menu_bar, RECT rect, const struct m3_menu_colors *colors, UINT odaction )
++{
++    COLORREF back = menu_bar ? colors->bar : colors->back, text, variant;
++    BOOL grayed = (item->fState & MF_GRAYED) != 0;
++    UINT format = DT_SINGLELINE | DT_VCENTER;
++    RECT box, bmprc;
++    int i;
++
++    m3_fill( hdc, &rect, back );
++    if (item->fType & MF_SEPARATOR)
++    {
++        if (menu_bar) return;
++        SetRect( &box, rect.left + m3_px( 12 ), (rect.top + rect.bottom) / 2, rect.right - m3_px( 12 ),
++                 (rect.top + rect.bottom) / 2 + max( 1, m3_px( 1 )));
++        m3_fill( hdc, &box, colors->outline );
++        return;
++    }
++    if (item->fState & MF_HILITE)
++    {
++        COLORREF state = m3_mix( back, colors->text, (item->fState & MF_MOUSESELECT) && menu_bar ? 0.12f : 0.08f );
++
++        box = rect;
++        if (menu_bar) InflateRect( &box, -m3_px( 2 ), -m3_px( 2 ));
++        else InflateRect( &box, -m3_px( 4 ), -m3_px( 1 ));
++        m3_fill_round_rect( hdc, &box, menu_bar ? (box.bottom - box.top) / 2 : m3_px( 8 ), back, state );
++        back = state;
++    }
++    text = grayed ? m3_mix( back, colors->text, 0.38f ) : colors->text;
++    variant = grayed ? text : colors->variant;
++    NtGdiGetAndSetDCDword( hdc, NtGdiSetBkMode, TRANSPARENT, NULL );
++    NtGdiGetAndSetDCDword( hdc, NtGdiSetTextColor, text, NULL );
++
++    if (menu_bar)
++    {
++        if (item->hbmpItem)
++        {
++            POINT org;
++
++            SetRect( &bmprc, item->hbmpItem == HBMMENU_CALLBACK ? 3 : (item->text ? menucharsize.cx : 0), 0, 0, 0 );
++            bmprc.right = bmprc.left + item->bmpsize.cx;
++            bmprc.top = item->hbmpItem == HBMMENU_CALLBACK ? (rect.bottom - rect.top - item->bmpsize.cy) / 2 : 0;
++            bmprc.bottom = bmprc.top + item->bmpsize.cy;
++            set_viewport_org( hdc, rect.left, rect.top, &org );
++            draw_bitmap_item( hwnd, hdc, item, &bmprc, menu, owner, odaction );
++            set_viewport_org( hdc, org.x, org.y, NULL );
++            rect.left += item->bmpsize.cx;
++        }
++        if (item->text) DrawTextW( hdc, item->text, -1, &rect, format | DT_CENTER );
++        return;
++    }
++
++    box = rect;
++    box.left += m3_px( 12 );
++    if (!(menu->dwStyle & MNS_NOCHECK))
++    {
++        UINT check_width = get_system_metrics( SM_CXMENUCHECK ), check_height = get_system_metrics( SM_CYMENUCHECK );
++        HBITMAP bm = (item->fState & MF_CHECKED) ? item->hCheckBit : item->hUnCheckBit;
++        BOOL checked = FALSE;
++
++        if (bm)
++        {
++            HDC mem_hdc = NtGdiCreateCompatibleDC( hdc );
++
++            NtGdiSelectBitmap( mem_hdc, bm );
++            NtGdiBitBlt( hdc, box.left, (rect.top + rect.bottom - check_height) / 2, check_width, check_height,
++                         mem_hdc, 0, 0, SRCCOPY, 0, 0 );
++            NtGdiDeleteObjectApp( mem_hdc );
++            checked = TRUE;
++        }
++        else if (item->fState & MF_CHECKED)
++        {
++            RECT check = { box.left, rect.top, box.left + check_width, rect.bottom };
++
++            m3_draw_check( hdc, &check, (item->fType & MFT_RADIOCHECK) != 0, back, text );
++            checked = TRUE;
++        }
++        if (item->hbmpItem && !(checked && (menu->dwStyle & MNS_CHECKORBMP)))
++        {
++            POINT org;
++
++            bmprc.left = (menu->dwStyle & MNS_CHECKORBMP) ? m3_px( 12 ) : m3_px( 12 ) + check_width + 4;
++            bmprc.right = bmprc.left + item->bmpsize.cx;
++            bmprc.top = (rect.bottom - rect.top - item->bmpsize.cy) / 2;
++            bmprc.bottom = bmprc.top + item->bmpsize.cy;
++            set_viewport_org( hdc, rect.left, rect.top, &org );
++            draw_bitmap_item( hwnd, hdc, item, &bmprc, menu, owner, odaction );
++            set_viewport_org( hdc, org.x, org.y, NULL );
++        }
++        box.left += check_width + 4;
++    }
++    else if (item->hbmpItem)
++    {
++        POINT org;
++
++        SetRect( &bmprc, m3_px( 12 ), (rect.bottom - rect.top - item->bmpsize.cy) / 2, 0, 0 );
++        bmprc.right = bmprc.left + item->bmpsize.cx;
++        bmprc.bottom = bmprc.top + item->bmpsize.cy;
++        set_viewport_org( hdc, rect.left, rect.top, &org );
++        draw_bitmap_item( hwnd, hdc, item, &bmprc, menu, owner, odaction );
++        set_viewport_org( hdc, org.x, org.y, NULL );
++    }
++    if (item->fType & MF_POPUP) m3_draw_arrow( hdc, &rect, back, variant );
++    if (!item->text) return;
++
++    if (!(menu->dwStyle & MNS_CHECKORBMP)) box.left += menu->textOffset;
++    box.right -= m3_px( 12 ) + ((item->fType & MF_POPUP) ? m3_px( 16 ) : 0);
++    for (i = 0; item->text[i]; i++) if (item->text[i] == '\t' || item->text[i] == '\b') break;
++    if (item->fState & MFS_DEFAULT)
++    {
++        HFONT prev_font = NtGdiSelectFont( hdc, get_menu_font( TRUE ));
++
++        DrawTextW( hdc, item->text, i, &box, format | DT_LEFT );
++        NtGdiSelectFont( hdc, prev_font );
++    }
++    else DrawTextW( hdc, item->text, i, &box, format | DT_LEFT );
++
++    /* the shortcut, on the right */
++    if (item->text[i])
++    {
++        NtGdiGetAndSetDCDword( hdc, NtGdiSetTextColor, variant, NULL );
++        DrawTextW( hdc, item->text + i + 1, -1, &box, format | DT_RIGHT );
++    }
++}
++
+ /* Calculate the size of the menu bar */
+ static void calc_menu_bar_size( HDC hdc, RECT *rect, struct menu *menu, HWND owner )
+ {
++    struct m3_menu_colors colors;
++    BOOL m3 = get_m3_menu_colors( owner, &colors );
+     UINT start, i, help_pos;
+     int org_x, org_y;
+     struct menu_item *item;
+@@ -2176,6 +2373,7 @@ static void calc_menu_bar_size( HDC hdc, RECT *rect, struct menu *menu, HWND own
+ 
+             TRACE("item org=(%d, %d) %s\n", org_x, org_y, debugstr_menuitem( item ));
+             calc_menu_item_size( hdc, item, owner, org_x, org_y, TRUE, menu );
++            if (m3 && !(item->fType & (MF_OWNERDRAW | MF_SYSMENU))) item->rect.right += m3_px( 8 );
+ 
+             if (item->rect.right > menu->items_rect.right)
+             {
+@@ -2383,6 +2581,8 @@ got_bitmap:
+ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
+                             struct menu_item *item, BOOL menu_bar, UINT odaction )
+ {
++    struct m3_menu_colors m3_colors;
++    BOOL m3 = !menu->hbrBack && get_m3_menu_colors( menu_bar ? hwnd : owner, &m3_colors );
+     UINT arrow_width = 0, arrow_height = 0;
+     HRGN old_clip = NULL, clip;
+     BOOL flat_menu = FALSE;
+@@ -2493,6 +2693,12 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
+         goto done;
+     }
+ 
++    if (m3)
++    {
++        m3_draw_menu_item( hwnd, menu, owner, hdc, item, menu_bar, rect, &m3_colors, odaction );
++        goto done;
++    }
++
+     if (menu_bar && (item->fType & MF_SEPARATOR)) goto done;
+ 
+     if (item->fState & MF_HILITE)
+@@ -2733,6 +2939,7 @@ done:
+  */
+ DWORD WINAPI NtUserDrawMenuBarTemp( HWND hwnd, HDC hdc, RECT *rect, HMENU handle, HFONT font )
+ {
++    struct m3_menu_colors m3_colors;
+     BOOL flat_menu = FALSE;
+     HFONT prev_font = 0;
+     struct menu *menu;
+@@ -2754,11 +2961,21 @@ DWORD WINAPI NtUserDrawMenuBarTemp( HWND hwnd, HDC hdc, RECT *rect, HMENU handle
+ 
+     rect->bottom = rect->top + menu->Height;
+ 
+-    fill_rect( hdc, rect, get_sys_color_brush( flat_menu ? COLOR_MENUBAR : COLOR_MENU ));
++    if (get_m3_menu_colors( hwnd, &m3_colors ))
++    {
++        RECT rc = *rect;
+ 
+-    NtGdiSelectPen( hdc, get_sys_color_pen( COLOR_3DFACE ));
+-    NtGdiMoveTo( hdc, rect->left, rect->bottom, NULL );
+-    NtGdiLineTo( hdc, rect->right, rect->bottom );
++        rc.bottom++;  /* the line under the menu bar too */
++        m3_fill( hdc, &rc, m3_colors.bar );
++    }
++    else
++    {
++        fill_rect( hdc, rect, get_sys_color_brush( flat_menu ? COLOR_MENUBAR : COLOR_MENU ));
++
++        NtGdiSelectPen( hdc, get_sys_color_pen( COLOR_3DFACE ));
++        NtGdiMoveTo( hdc, rect->left, rect->bottom, NULL );
++        NtGdiLineTo( hdc, rect->right, rect->bottom );
++    }
+ 
+     if (menu->nItems)
+     {
+@@ -2851,13 +3068,30 @@ static void draw_popup_menu( HWND hwnd, HDC hdc, HMENU hmenu )
+ {
+     HBRUSH prev_hrush, brush = get_sys_color_brush( COLOR_MENU );
+     struct menu *menu = unsafe_menu_ptr( hmenu );
++    struct m3_menu_colors m3_colors;
+     RECT rect;
++    UINT i;
+ 
+     TRACE( "wnd=%p dc=%p menu=%p\n", hwnd, hdc, hmenu );
+ 
+     get_client_rect( hwnd, &rect, get_thread_dpi() );
+ 
+     if (menu && menu->hbrBack) brush = menu->hbrBack;
++    else if (menu && get_m3_menu_colors( menu->hwndOwner, &m3_colors ))
++    {
++        HBRUSH outline = NtGdiCreateSolidBrush( m3_colors.outline, NULL );
++
++        if (NtGdiSelectFont( hdc, get_menu_font( FALSE )))
++        {
++            m3_fill( hdc, &rect, m3_colors.back );
++            frame_rect( hdc, &rect, outline );
++            for (i = 0; i < menu->nItems; i++)
++                draw_menu_item( hwnd, menu, menu->hwndOwner, hdc, &menu->items[i], FALSE, ODA_DRAWENTIRE );
++            if (menu->bScrolling) draw_scroll_arrows( menu, hdc );
++        }
++        NtGdiDeleteObjectApp( outline );
++        return;
++    }
+     if ((prev_hrush = NtGdiSelectBrush( hdc, brush ))
+         && NtGdiSelectFont( hdc, get_menu_font( FALSE )))
+     {
+@@ -2969,6 +3203,8 @@ HWND is_menu_active(void)
+ /* Calculate the size of a popup menu */
+ static void calc_popup_menu_size( struct menu *menu, UINT max_height )
+ {
++    struct m3_menu_colors m3_colors;
++    BOOL m3 = !menu->hbrBack && get_m3_menu_colors( menu->hwndOwner, &m3_colors );
+     BOOL textandbmp = FALSE, multi_col = FALSE;
+     int org_x, org_y, max_tab, max_tab_width;
+     struct menu_item *item;
+@@ -3005,6 +3241,7 @@ static void calc_popup_menu_size( struct menu *menu, UINT max_height )
+             }
+ 
+             calc_menu_item_size( hdc, item, menu->hwndOwner, org_x, org_y, FALSE, menu );
++            if (m3) m3_popup_item_size( item );
+             menu->items_rect.right = max( menu->items_rect.right, item->rect.right );
+             org_y = item->rect.bottom;
+             if (IS_STRING_ITEM( item->fType ) && item->xTab)
+@@ -3035,9 +3272,9 @@ static void calc_popup_menu_size( struct menu *menu, UINT max_height )
+ 
+     menu->nTotalHeight = menu->items_rect.bottom;
+ 
+-    /* space for the border */
+-    OffsetRect( &menu->items_rect, MENU_MARGIN, MENU_MARGIN );
+-    menu->Height = menu->items_rect.bottom + MENU_MARGIN;
++    /* space for the border, and room above and below the items of Material 3 menus */
++    OffsetRect( &menu->items_rect, MENU_MARGIN, MENU_MARGIN + (m3 ? m3_px( 4 ) : 0) );
++    menu->Height = menu->items_rect.bottom + MENU_MARGIN + (m3 ? m3_px( 4 ) : 0);
+     menu->Width = menu->items_rect.right + MENU_MARGIN;
+ 
+     /* Adjust popup height if it exceeds maximum */
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index 5d0925470..47cf1e0e0 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -170,6 +170,18 @@ extern DWORD get_process_layout(void);
+ extern COLORREF get_sys_color( int index );
+ extern HBRUSH get_sys_color_brush( unsigned int index );
+ extern void reload_sys_colors(void);
++
++/* Material 3 frames and menus (defwnd.c) */
++struct m3_menu_colors
++{
++    COLORREF back, bar, text, variant, outline;
++};
++extern BOOL get_m3_menu_colors( HWND hwnd, struct m3_menu_colors *colors );
++extern COLORREF m3_mix( COLORREF base, COLORREF over, float amount );
++extern float m3_segment_cover( float px, float py, float x1, float y1, float x2, float y2, float half );
++extern void m3_draw_strokes( HDC hdc, const RECT *box, const float *segments, int count, float width,
++                             COLORREF back, COLORREF color );
++extern void m3_fill_round_rect( HDC hdc, const RECT *rect, int radius, COLORREF back, COLORREF color );
+ extern HPEN get_sys_color_pen( unsigned int index );
+ extern UINT get_system_dpi(void);
+ extern int get_system_metrics( int index );
