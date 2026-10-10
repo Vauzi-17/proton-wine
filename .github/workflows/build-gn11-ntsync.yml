@@ -164,6 +164,7 @@ jobs:
           check dlls/ntdll/unix/signal_arm64.c 'PSTATE_sig(context) = (PSTATE_sig(context) & cpsr_host_mask) | frame->cpsr;' "Wine MR 12262"
           check server/inproc_sync.c 'reply->sync_handle = alloc_handle_no_access_check' "userspace ntsync object lifetime (wineserver)"
           check dlls/ntdll/unix/sync.c 'sync->handle = reply->sync_handle;' "userspace ntsync object lifetime (client)"
+          check dlls/ntdll/unix/sync.c 'static const size_t size = INPROC_SYNC_CACHE_BLOCK_BYTES;' "whole-page inproc sync cache blocks"
           check dlls/ntdll/unix/sync.c 'ntsync_userspace' "userspace ntsync client"
           check programs/explorer/material.c 'm3_apply_file_manager' "Material 3 desktop"
 

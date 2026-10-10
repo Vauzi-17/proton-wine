@@ -1,4 +1,4 @@
-From 680213fe0809f1bde318a9edc4ab6916d5042ff9 Mon Sep 17 00:00:00 2001
+From fe07313e77416c0fb17fd32d685b9585bad123c1 Mon Sep 17 00:00:00 2001
 From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 04:21:47 +0000
 Subject: [PATCH 03/21] ntsync: Keep userspace ntsync objects alive while a
@@ -16,42 +16,60 @@ WAIT_ABANDONED. kernel32's sync test catches exactly this (sync.c:252,
 get_inproc_sync_fd now also returns, in userspace mode, a handle to the
 server's inproc_sync object. The client keeps it in its cache entry and
 closes it, with a raw close_handle request because fd_cache_mutex may be
-held, when the entry's last reference goes away.
+held, when the entry's last reference goes away. The handle makes a cache
+entry 20 bytes, so a cache block no longer comes out at a whole number of
+pages; blocks stay 64k so anon_mmap_alloc() gets whole pages.
 
 This is the fix of the proton-cachyos 11 and GE-Proton 11.0-5 ntsync
 builds, on GameNative's patches. The reply field goes into
 server/protocol.def; autogen.sh regenerates the protocol headers.
 ---
- .../common/dlls_ntdll_unix_sync_c.patch       | 56 ++++++++++++++++---
- .../patches/common/server_inproc_sync_c.patch | 21 ++++++-
+ .../common/dlls_ntdll_unix_sync_c.patch       | 72 ++++++++++++++++---
+ .../patches/common/server_inproc_sync_c.patch | 21 +++++-
  server/protocol.def                           |  1 +
- 3 files changed, 67 insertions(+), 11 deletions(-)
+ 3 files changed, 83 insertions(+), 11 deletions(-)
 
 diff --git a/android/patches/common/dlls_ntdll_unix_sync_c.patch b/android/patches/common/dlls_ntdll_unix_sync_c.patch
-index 2b1e5280383..e2f202aca97 100644
+index 2b1e5280383..913d39b5b1e 100644
 --- a/android/patches/common/dlls_ntdll_unix_sync_c.patch
 +++ b/android/patches/common/dlls_ntdll_unix_sync_c.patch
 @@ -1,5 +1,5 @@
  diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
 -index 67ab945cef8..8e79186810f 100644
-+index 67ab945cef8..6ecb444a268 100644
++index 67ab945cef8..559a0a4ebe3 100644
  --- a/dlls/ntdll/unix/sync.c
  +++ b/dlls/ntdll/unix/sync.c
  @@ -61,7 +61,14 @@
-@@ -276,26 +276,66 @@ index 67ab945cef8..8e79186810f 100644
+@@ -276,26 +276,82 @@ index 67ab945cef8..8e79186810f 100644
       }
       else if (timeout->QuadPart <= 0)
       {
 -@@ -636,7 +815,12 @@ static void release_inproc_sync( struct inproc_sync *sync )
-+@@ -542,6 +721,7 @@ struct inproc_sync
++@@ -542,9 +721,13 @@ struct inproc_sync
 +     unsigned int   access;    /* handle access rights */
 +     unsigned short type;      /* enum inproc_sync_type as short to save space */
 +     unsigned short closed;    /* fd has been closed but sync is still referenced */
 ++    obj_handle_t   handle;    /* userspace ntsync: server handle keeping the object alive */
 + };
 + 
-+ #define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync))
-+@@ -601,6 +781,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++-#define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync))
+++/* A block is always 64k: anon_mmap_alloc() takes whole pages, and with the
+++ * userspace ntsync handle the entry is no longer a power of two in size. */
+++#define INPROC_SYNC_CACHE_BLOCK_BYTES 65536
+++#define INPROC_SYNC_CACHE_BLOCK_SIZE  (INPROC_SYNC_CACHE_BLOCK_BYTES / sizeof(struct inproc_sync))
++ #define INPROC_SYNC_CACHE_ENTRIES     128
++ 
++ static struct inproc_sync *inproc_sync_cache[INPROC_SYNC_CACHE_ENTRIES];
++@@ -582,7 +765,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++         if (!entry) inproc_sync_cache[0] = inproc_sync_cache_initial_block;
++         else
++         {
++-            static const size_t size = INPROC_SYNC_CACHE_BLOCK_SIZE * sizeof(struct inproc_sync);
+++            static const size_t size = INPROC_SYNC_CACHE_BLOCK_BYTES;
++             void *ptr = anon_mmap_alloc( size, PROT_READ | PROT_WRITE );
++             if (ptr == MAP_FAILED) return sync;
++             inproc_sync_cache[entry] = ptr;
++@@ -601,6 +784,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
 +     }
 + 
 +     cache->fd = sync->fd;
@@ -59,7 +77,7 @@ index 2b1e5280383..e2f202aca97 100644
 +     cache->access = sync->access;
 +     cache->type = sync->type;
 +     cache->closed = sync->closed;
-+@@ -633,10 +814,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
++@@ -633,10 +817,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
 +     /* save the fd now; as soon as the refcount hits 0 we cannot
 +      * access the cache anymore */
 +     int fd = sync->fd;
@@ -94,7 +112,7 @@ index 2b1e5280383..e2f202aca97 100644
   
   static struct inproc_sync *get_cached_inproc_sync( HANDLE handle )
 -@@ -677,8 +861,18 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
-+@@ -677,8 +879,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
++@@ -677,8 +882,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
           {
               obj_handle_t fd_handle;
               sync->refcount = 1;
@@ -110,21 +128,21 @@ index 2b1e5280383..e2f202aca97 100644
  +            else
  +            {
  +                sync->fd = wine_server_receive_fd( &fd_handle );
-@@ -308,7 +348,7 @@ index 67ab945cef8..8e79186810f 100644
+@@ -308,7 +364,7 @@ index 67ab945cef8..8e79186810f 100644
               sync->access = reply->access;
               sync->type = reply->type;
               sync->closed = 0;
 -@@ -908,6 +1102,10 @@ int get_inproc_alert_fd(void)
-+@@ -908,6 +1125,10 @@ int get_inproc_alert_fd(void)
++@@ -908,6 +1128,10 @@ int get_inproc_alert_fd(void)
               if (!server_call_unlocked( req ))
               {
                   if (do_fsync()) data->alert_fd = fd = reply->fsync_shm_idx;
-@@ -319,7 +359,7 @@ index 67ab945cef8..8e79186810f 100644
+@@ -319,7 +375,7 @@ index 67ab945cef8..8e79186810f 100644
                   else
                   {
                       data->alert_fd = fd = wine_server_receive_fd( &token );
 -@@ -2426,6 +2624,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
-+@@ -2426,6 +2647,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
++@@ -2426,6 +2650,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
    */
   NTSTATUS WINAPI NtYieldExecution(void)
   {
