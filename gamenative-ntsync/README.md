@@ -52,10 +52,26 @@ Applied with `git am` on top of the GE patches.
   abandoned mutex is reported. Same fix as in the proton-cachyos 11 and
   GE-Proton 11.0-5 builds. The esync fix of those builds isn't needed: this
   tree has no esync, and wineserver turns fsync off while ntsync is in use.
+  A cache entry grows to 20 bytes with it, so cache blocks are kept at 64k
+  (whole pages for `anon_mmap_alloc()`).
 - `0004`: The412Banner's XP desktop, which the Material 3 desktop builds on.
 - `0005`-`0021`: the Material 3 desktop, programs, visual style, menus,
   fonts, icons, Files and pill buttons: `ge-ntsync/ge11.0-5/0003`-`0019`,
   unchanged.
+- `0022`: wineserver says once when it can't create userspace ntsync
+  objects, and a userspace wait that fails is logged.
+
+## `ntsync-android/`
+
+Applied to GameNative/ntsync-android (`7ce6435`) before it is built.
+Wine 11 creates an ntsync object for every server object that can be
+waited on (each open file, process, thread, queued APC, timer) when that
+object is created; the Proton 10 in-process sync only did so when a client
+first waited on it. With games holding thousands of handles, the library's
+16384-object table could fill up, and the server objects that need one
+(files, threads, APCs) then fail to be created. The table now holds 65536
+objects and 32768 waiter nodes, handles stay below 2^31, and wait-any
+accepts the same handle twice, as the kernel driver does.
 
 A push that changes these directories builds and uploads the
 `.wcp`/`.wcp.xz`. Publishing a prerelease is Actions, this workflow, Run

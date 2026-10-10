@@ -1,0 +1,322 @@
+From d7e37f68f9cbc28a48be83df08c6037f19db86cc Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 10:04:50 +0000
+Subject: [PATCH] ntsync: Report userspace ntsync failures.
+
+wineserver says once when it cannot create userspace ntsync objects (the
+shared table is full or the region is unusable), and a userspace wait
+that fails for another reason than a timeout or an abandoned mutex is
+logged with its error. Both used to fail silently: object creation
+failed with STATUS_TOO_MANY_OPENED_FILES and a wait returned an error
+the application rarely checks.
+---
+ .../common/dlls_ntdll_unix_sync_c.patch       | 37 ++++++++++---------
+ .../patches/common/server_inproc_sync_c.patch | 37 ++++++++++++-------
+ 2 files changed, 43 insertions(+), 31 deletions(-)
+
+diff --git a/android/patches/common/dlls_ntdll_unix_sync_c.patch b/android/patches/common/dlls_ntdll_unix_sync_c.patch
+index 913d39b5b1e..3f814fe35fa 100644
+--- a/android/patches/common/dlls_ntdll_unix_sync_c.patch
++++ b/android/patches/common/dlls_ntdll_unix_sync_c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+-index 67ab945cef8..559a0a4ebe3 100644
++index 67ab945cef8..a3b775ec6ac 100644
+ --- a/dlls/ntdll/unix/sync.c
+ +++ b/dlls/ntdll/unix/sync.c
+ @@ -61,7 +61,14 @@
+@@ -29,7 +29,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+  
+  static const char *debugstr_timeout( const LARGE_INTEGER *timeout )
+  {
+-@@ -312,8 +324,151 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
++@@ -312,8 +324,152 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
+  
+  #ifdef NTSYNC_IOC_EVENT_READ
+  
+@@ -169,6 +169,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+ +    }
+ +    if (ret == -EOWNERDEAD) return STATUS_ABANDONED + (type != WaitAll ? args.index : 0);
+ +    if (ret == -ETIMEDOUT) return STATUS_TIMEOUT;
+++    ERR( "userspace ntsync wait on %u objects failed: %d\n", count, ret );
+ +    return errno_to_status( -ret );
+ +}
+ +#endif  /* __ANDROID__ */
+@@ -181,7 +182,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      if (ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count ) < 0)
+      {
+          if (errno == EOVERFLOW) return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+-@@ -325,6 +480,9 @@ static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_c
++@@ -325,6 +481,9 @@ static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_c
+  
+  static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION *info )
+  {
+@@ -191,7 +192,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      struct ntsync_sem_args args = {0};
+      if (ioctl( obj, NTSYNC_IOC_SEM_READ, &args ) < 0) return errno_to_status( errno );
+      info->CurrentCount = args.count;
+-@@ -334,7 +492,10 @@ static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION
++@@ -334,7 +493,10 @@ static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION
+  
+  static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
+  {
+@@ -203,7 +204,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      if (ioctl( obj, NTSYNC_IOC_EVENT_SET, &prev ) < 0) return errno_to_status( errno );
+      if (prev_state) *prev_state = prev;
+      return STATUS_SUCCESS;
+-@@ -342,7 +503,10 @@ static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
++@@ -342,7 +504,10 @@ static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
+  
+  static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
+  {
+@@ -215,7 +216,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      if (ioctl( obj, NTSYNC_IOC_EVENT_RESET, &prev ) < 0) return errno_to_status( errno );
+      if (prev_state) *prev_state = prev;
+      return STATUS_SUCCESS;
+-@@ -350,7 +514,10 @@ static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
++@@ -350,7 +515,10 @@ static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
+  
+  static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
+  {
+@@ -227,7 +228,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      if (ioctl( obj, NTSYNC_IOC_EVENT_PULSE, &prev ) < 0) return errno_to_status( errno );
+      if (prev_state) *prev_state = prev;
+      return STATUS_SUCCESS;
+-@@ -358,6 +525,9 @@ static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
++@@ -358,6 +526,9 @@ static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
+  
+  static NTSTATUS linux_query_event_obj( int obj, EVENT_BASIC_INFORMATION *info )
+  {
+@@ -237,7 +238,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      struct ntsync_event_args args = {0};
+      if (ioctl( obj, NTSYNC_IOC_EVENT_READ, &args ) < 0) return errno_to_status( errno );
+      info->EventType = args.manual ? NotificationEvent : SynchronizationEvent;
+-@@ -367,6 +537,9 @@ static NTSTATUS linux_query_event_obj( int obj, EVENT_BASIC_INFORMATION *info )
++@@ -367,6 +538,9 @@ static NTSTATUS linux_query_event_obj( int obj, EVENT_BASIC_INFORMATION *info )
+  
+  static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
+  {
+@@ -247,7 +248,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      struct ntsync_mutex_args args = {.owner = GetCurrentThreadId()};
+      if (ioctl( obj, NTSYNC_IOC_MUTEX_UNLOCK, &args ) < 0)
+      {
+-@@ -380,6 +553,9 @@ static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
++@@ -380,6 +554,9 @@ static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
+  
+  static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
+  {
+@@ -257,7 +258,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      struct ntsync_mutex_args args = {0};
+      if (ioctl( obj, NTSYNC_IOC_MUTEX_READ, &args ) < 0)
+      {
+-@@ -401,6 +577,9 @@ static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
++@@ -401,6 +578,9 @@ static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
+  static NTSTATUS linux_wait_objs( int device, DWORD count, const int *objs, WAIT_TYPE type,
+                                   int alert_fd, const LARGE_INTEGER *timeout )
+  {
+@@ -267,7 +268,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      struct ntsync_wait_args args = {0};
+      unsigned long request;
+      struct timespec now;
+-@@ -408,7 +587,7 @@ static NTSTATUS linux_wait_objs( int device, DWORD count, const int *objs, WAIT_
++@@ -408,7 +588,7 @@ static NTSTATUS linux_wait_objs( int device, DWORD count, const int *objs, WAIT_
+  
+      if (!timeout || timeout->QuadPart == TIMEOUT_INFINITE)
+      {
+@@ -276,7 +277,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      }
+      else if (timeout->QuadPart <= 0)
+      {
+-@@ -542,9 +721,13 @@ struct inproc_sync
++@@ -542,9 +722,13 @@ struct inproc_sync
+      unsigned int   access;    /* handle access rights */
+      unsigned short type;      /* enum inproc_sync_type as short to save space */
+      unsigned short closed;    /* fd has been closed but sync is still referenced */
+@@ -291,7 +292,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+  #define INPROC_SYNC_CACHE_ENTRIES     128
+  
+  static struct inproc_sync *inproc_sync_cache[INPROC_SYNC_CACHE_ENTRIES];
+-@@ -582,7 +765,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++@@ -582,7 +766,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
+          if (!entry) inproc_sync_cache[0] = inproc_sync_cache_initial_block;
+          else
+          {
+@@ -300,7 +301,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+              void *ptr = anon_mmap_alloc( size, PROT_READ | PROT_WRITE );
+              if (ptr == MAP_FAILED) return sync;
+              inproc_sync_cache[entry] = ptr;
+-@@ -601,6 +784,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
++@@ -601,6 +785,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync
+      }
+  
+      cache->fd = sync->fd;
+@@ -308,7 +309,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+      cache->access = sync->access;
+      cache->type = sync->type;
+      cache->closed = sync->closed;
+-@@ -633,10 +817,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
++@@ -633,10 +818,31 @@ static void release_inproc_sync( struct inproc_sync *sync )
+      /* save the fd now; as soon as the refcount hits 0 we cannot
+       * access the cache anymore */
+      int fd = sync->fd;
+@@ -340,7 +341,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+  }
+  
+  static struct inproc_sync *get_cached_inproc_sync( HANDLE handle )
+-@@ -677,8 +882,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
++@@ -677,8 +883,23 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync
+          {
+              obj_handle_t fd_handle;
+              sync->refcount = 1;
+@@ -364,7 +365,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+              sync->access = reply->access;
+              sync->type = reply->type;
+              sync->closed = 0;
+-@@ -908,6 +1128,10 @@ int get_inproc_alert_fd(void)
++@@ -908,6 +1129,10 @@ int get_inproc_alert_fd(void)
+              if (!server_call_unlocked( req ))
+              {
+                  if (do_fsync()) data->alert_fd = fd = reply->fsync_shm_idx;
+@@ -375,7 +376,7 @@ index 67ab945cef8..559a0a4ebe3 100644
+                  else
+                  {
+                      data->alert_fd = fd = wine_server_receive_fd( &token );
+-@@ -2426,6 +2650,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
++@@ -2426,6 +2651,19 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
+   */
+  NTSTATUS WINAPI NtYieldExecution(void)
+  {
+diff --git a/android/patches/common/server_inproc_sync_c.patch b/android/patches/common/server_inproc_sync_c.patch
+index 74acf582251..0ae381d27db 100644
+--- a/android/patches/common/server_inproc_sync_c.patch
++++ b/android/patches/common/server_inproc_sync_c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+-index a7020ef8fcd..8e593d19b91 100644
++index a7020ef8fcd..ebc37e2b93a 100644
+ --- a/server/inproc_sync.c
+ +++ b/server/inproc_sync.c
+ @@ -36,7 +36,14 @@
+@@ -17,7 +17,7 @@ index a7020ef8fcd..8e593d19b91 100644
+  
+  #ifdef NTSYNC_IOC_EVENT_READ
+  
+-@@ -45,18 +52,89 @@
++@@ -45,18 +52,100 @@
+  #include <sys/stat.h>
+  #include <unistd.h>
+  
+@@ -29,24 +29,35 @@ index a7020ef8fcd..8e593d19b91 100644
+ +    return ntsync_userspace;
+ +}
+ +
+++/* say once why objects can't be created: the shared table is full, or the region is gone */
+++static int ntsync_create_failed( int ret )
+++{
+++    static int reported;
+++    if (!reported++) fprintf( stderr, "wineserver: userspace ntsync: cannot create objects: %s\n", strerror( -ret ) );
+++    return -1;
+++}
+++
+ +static int create_ntsync_event( const struct ntsync_event_args *args )
+ +{
+ +    uint32_t handle;
+-+    if (ntsync_create_event( &handle, args )) return -1;
+++    int ret;
+++    if ((ret = ntsync_create_event( &handle, args ))) return ntsync_create_failed( ret );
+ +    return (int)handle;
+ +}
+ +
+ +static int create_ntsync_mutex( const struct ntsync_mutex_args *args )
+ +{
+ +    uint32_t handle;
+-+    if (ntsync_create_mutex( &handle, args )) return -1;
+++    int ret;
+++    if ((ret = ntsync_create_mutex( &handle, args ))) return ntsync_create_failed( ret );
+ +    return (int)handle;
+ +}
+ +
+ +static int create_ntsync_sem( const struct ntsync_sem_args *args )
+ +{
+ +    uint32_t handle;
+-+    if (ntsync_create_sem( &handle, args )) return -1;
+++    int ret;
+++    if ((ret = ntsync_create_sem( &handle, args ))) return ntsync_create_failed( ret );
+ +    return (int)handle;
+ +}
+ +#endif  /* __ANDROID__ */
+@@ -107,7 +118,7 @@ index a7020ef8fcd..8e593d19b91 100644
+              fprintf( stderr, "ntsync: up and running.\n" );
+          }
+          else if (do_fsync()) fd = FSYNC_USED_BY_SERVER;
+-@@ -124,6 +202,10 @@ struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
++@@ -124,6 +213,10 @@ struct inproc_sync *create_inproc_internal_sync( int manual, int signaled )
+      else
+      {
+          event->type = INPROC_SYNC_INTERNAL;
+@@ -118,7 +129,7 @@ index a7020ef8fcd..8e593d19b91 100644
+          event->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
+      }
+      list_init( &event->entry );
+-@@ -151,6 +233,10 @@ struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
++@@ -151,6 +244,10 @@ struct inproc_sync *create_inproc_event_sync( int manual, int signaled )
+      else
+      {
+          event->type = INPROC_SYNC_EVENT;
+@@ -129,7 +140,7 @@ index a7020ef8fcd..8e593d19b91 100644
+          event->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_EVENT, &args );
+      }
+      list_init( &event->entry );
+-@@ -178,6 +264,10 @@ struct inproc_sync *create_inproc_mutex_sync( thread_id_t owner, unsigned int co
++@@ -178,6 +275,10 @@ struct inproc_sync *create_inproc_mutex_sync( thread_id_t owner, unsigned int co
+      else
+      {
+          mutex->type = INPROC_SYNC_MUTEX;
+@@ -140,7 +151,7 @@ index a7020ef8fcd..8e593d19b91 100644
+          mutex->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_MUTEX, &args );
+      }
+      list_add_tail( &inproc_mutexes, &mutex->entry );
+-@@ -206,6 +296,10 @@ struct inproc_sync *create_inproc_semaphore_sync( unsigned int initial, unsigned
++@@ -206,6 +307,10 @@ struct inproc_sync *create_inproc_semaphore_sync( unsigned int initial, unsigned
+      else
+      {
+          sem->type = INPROC_SYNC_SEMAPHORE;
+@@ -151,7 +162,7 @@ index a7020ef8fcd..8e593d19b91 100644
+          sem->fd   = ioctl( get_inproc_device_fd(), NTSYNC_IOC_CREATE_SEM, &args );
+      }
+      list_init( &sem->entry );
+-@@ -228,17 +322,23 @@ static void inproc_sync_dump( struct object *obj, int verbose )
++@@ -228,17 +333,23 @@ static void inproc_sync_dump( struct object *obj, int verbose )
+  
+  void signal_inproc_sync( struct inproc_sync *sync )
+  {
+@@ -177,7 +188,7 @@ index a7020ef8fcd..8e593d19b91 100644
+      else            ioctl( sync->fd, NTSYNC_IOC_EVENT_RESET, &count );
+  }
+  
+-@@ -262,6 +362,9 @@ static void inproc_sync_destroy( struct object *obj )
++@@ -262,6 +373,9 @@ static void inproc_sync_destroy( struct object *obj )
+      assert( obj->ops == &inproc_sync_ops );
+      list_remove( &sync->entry );
+      if (do_fsync()) fsync_free_shm_idx( sync->fd );
+@@ -187,7 +198,7 @@ index a7020ef8fcd..8e593d19b91 100644
+      else            close( sync->fd );
+  }
+  
+-@@ -277,7 +380,13 @@ void abandon_inproc_mutexes( thread_id_t tid )
++@@ -277,7 +391,13 @@ void abandon_inproc_mutexes( thread_id_t tid )
+      }
+  
+      LIST_FOR_EACH_ENTRY( mutex, &inproc_mutexes, struct inproc_sync, entry )
+@@ -201,7 +212,7 @@ index a7020ef8fcd..8e593d19b91 100644
+  }
+  
+  static int get_obj_inproc_sync( struct object *obj, int *type )
+-@@ -359,6 +468,25 @@ DECL_HANDLER(get_inproc_sync_fd)
++@@ -359,6 +479,25 @@ DECL_HANDLER(get_inproc_sync_fd)
+  
+      if ((fd = get_obj_inproc_sync( obj, &reply->type )) < 0) set_error( STATUS_NOT_IMPLEMENTED );
+      else if (do_fsync()) reply->fsync_shm_idx = fsync_grab_shm_idx( fd );
+-- 
+2.43.0
+

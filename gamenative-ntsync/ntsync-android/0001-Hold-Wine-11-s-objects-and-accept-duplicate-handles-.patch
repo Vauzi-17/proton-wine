@@ -1,0 +1,143 @@
+From 8ffb839258cde07c4b58345d639625708a163ccc Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 10:05:00 +0000
+Subject: [PATCH] Hold Wine 11's objects, and accept duplicate handles in
+ wait-any
+
+Wine 11 creates an object for every server object that can be waited on
+(each open file, process, thread, queued APC, timer...) when that server
+object is created, not when a client first waits on it as the Proton 10
+in-process sync did. A game with a few thousand handles, plus Wine's own
+processes, can then run out of the 16384 slots; object creation fails
+and server objects (files, threads, APCs) can't be created.
+
+The table now holds 65536 objects and 32768 waiter nodes (about 3.7 MB of
+sparse shared memory). Handles stay below 2^31, since Wine keeps them in
+an int where a negative value means no object, so the generation is
+masked to 15 bits. The layout version goes to 10.
+
+Wait-any now accepts the same handle more than once, as the kernel
+driver and WaitForMultipleObjects do; only wait-all rejects duplicates.
+---
+ src/core.rs | 31 +++++++++++++++++++++----------
+ src/lib.rs  | 33 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 53 insertions(+), 11 deletions(-)
+
+diff --git a/src/core.rs b/src/core.rs
+index bbb0d54..40ee269 100644
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -40,11 +40,18 @@ use std::time::Duration;
+ pub const MAX_WAIT_COUNT: usize = 64;
+ 
+ const MAGIC: u64 = 0x6E7473796E635F75; // "ntsyc_u"
+-const VERSION: u32 = 9;
+-const SLOT_COUNT: u32 = 16384;
+-const NODE_COUNT: u32 = 8192;
+-const INDEX_BITS: u32 = 14; // log2(SLOT_COUNT)
++const VERSION: u32 = 10;
++// Wine 11 gives every server object that can be waited on (each open file,
++// process, thread, queued APC, timer...) an object of its own, created when
++// the server object is created, so the table has to hold far more than the
++// objects games create themselves.
++const SLOT_COUNT: u32 = 65536;
++const NODE_COUNT: u32 = 32768;
++const INDEX_BITS: u32 = 16; // log2(SLOT_COUNT)
+ const INDEX_MASK: u32 = (1 << INDEX_BITS) - 1;
++// Handles stay below 2^31: Wine keeps them in an int, where a negative
++// value means "no object".
++const GENERATION_MASK: u32 = (1 << (31 - INDEX_BITS)) - 1;
+ const NIL: u32 = u32::MAX;
+ 
+ /// Resolve the region path: explicit argument, else $NTSYNC_SHM, else
+@@ -828,7 +835,7 @@ pub fn close(handle: u32) -> bool {
+         // waiters so they re-validate and fail with -EINVAL (kernel keeps
+         // objects alive via fds, so it has no equivalent).
+         (&*(&(*slot).state as *const u32 as *const AtomicU32)).store(SLOT_FREE, Ordering::Release);
+-        (*slot).generation = (*slot).generation.wrapping_add(1);
++        (*slot).generation = (*slot).generation.wrapping_add(1) & GENERATION_MASK;
+     }
+     wake_object(r, handle & INDEX_MASK);
+     true
+@@ -1395,10 +1402,14 @@ fn wait(handles: &[u32], owner: u32, timeout: Option<Duration>, all: bool, alert
+     if owner == 0 || handles.is_empty() || handles.len() > MAX_WAIT_COUNT {
+         return WaitOutcome::Invalid;
+     }
+-    // Reject duplicate handles (kernel behavior) without allocating.
+-    for (i, h) in handles.iter().enumerate() {
+-        if handles[..i].contains(h) {
+-            return WaitOutcome::Invalid;
++    // Reject duplicate handles in wait-all (kernel behavior) without
++    // allocating. Wait-any accepts them, like the kernel driver and
++    // WaitForMultipleObjects.
++    if all {
++        for (i, h) in handles.iter().enumerate() {
++            if handles[..i].contains(h) {
++                return WaitOutcome::Invalid;
++            }
+         }
+     }
+     let Ok(r) = region() else {
+@@ -1750,7 +1761,7 @@ fn sweep_dead_locked(r: &Region) -> u32 {
+         unsafe {
+             if (*slot).state == SLOT_USED && (*slot).pid != 0 && !pid_alive((*slot).pid) {
+                 (*slot).state = SLOT_FREE;
+-                (*slot).generation = (*slot).generation.wrapping_add(1);
++                (*slot).generation = (*slot).generation.wrapping_add(1) & GENERATION_MASK;
+                 wake_object(r, index);
+                 freed += 1;
+             }
+diff --git a/src/lib.rs b/src/lib.rs
+index bfab36a..f302a18 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -72,7 +72,7 @@ mod tests {
+         // Handle 0 is the "no alert" sentinel in ntsync_wait_args.alert, so it
+         // must never be handed out: slot 0 is reserved at region init.
+         let h = create_event(false, false).unwrap();
+-        assert_ne!(h & ((1 << 14) - 1), 0);
++        assert_ne!(h & ((1 << 16) - 1), 0);
+         assert!(!close(0));
+         assert!(close(h));
+     }
+@@ -206,6 +206,37 @@ mod tests {
+         assert!(close(s2));
+     }
+ 
++    #[test]
++    fn wait_any_duplicate_handles() {
++        setup();
++        let e = create_event(false, false).unwrap();
++        let s = create_semaphore(1, 1).unwrap();
++        // wait-any takes the same object twice, wait-all does not
++        assert!(is_signaled(wait_any(&[e, e, s], 1, Some(Duration::ZERO), 0), 2));
++        assert_eq!(wait_all(&[s, s], 1, Some(Duration::ZERO), 0), WaitOutcome::Invalid);
++        let t = thread::spawn(move || {
++            thread::sleep(Duration::from_millis(50));
++            event_set(e).unwrap();
++        });
++        assert!(is_signaled(wait_any(&[e, e], 1, Some(Duration::from_secs(5)), 0), 0));
++        t.join().unwrap();
++        assert!(close(e));
++        assert!(close(s));
++    }
++
++    #[test]
++    fn many_objects() {
++        setup();
++        // more than the 16384 slots of earlier versions
++        let handles: Vec<u32> = (0..40000).map(|_| create_event(true, false).unwrap()).collect();
++        assert!(handles.iter().all(|&h| h < 0x8000_0000));
++        event_set(handles[39999]).unwrap();
++        assert!(is_signaled(wait_any(&[handles[0], handles[39999]], 1, Some(Duration::ZERO), 0), 1));
++        for h in handles {
++            assert!(close(h));
++        }
++    }
++
+     #[test]
+     fn invalid_handles() {
+         setup();
+-- 
+2.43.0
+

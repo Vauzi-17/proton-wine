@@ -109,6 +109,12 @@ jobs:
           ref: ${{ env.NTSYNC_ANDROID_REF }}
           path: ntsync-android
 
+      - name: Patch ntsync-android
+        working-directory: ntsync-android
+        run: |
+          git apply --verbose "$GITHUB_WORKSPACE"/recipe/gamenative-ntsync/ntsync-android/*.patch
+          grep -q 'const SLOT_COUNT: u32 = 65536;' src/core.rs || { echo "FATAL: ntsync-android patch did not land"; exit 1; }
+
       - name: Set up Rust for ntsync-android
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -165,6 +171,7 @@ jobs:
           check server/inproc_sync.c 'reply->sync_handle = alloc_handle_no_access_check' "userspace ntsync object lifetime (wineserver)"
           check dlls/ntdll/unix/sync.c 'sync->handle = reply->sync_handle;' "userspace ntsync object lifetime (client)"
           check dlls/ntdll/unix/sync.c 'static const size_t size = INPROC_SYNC_CACHE_BLOCK_BYTES;' "whole-page inproc sync cache blocks"
+          check server/inproc_sync.c 'userspace ntsync: cannot create objects' "userspace ntsync failure reports"
           check dlls/ntdll/unix/sync.c 'ntsync_userspace' "userspace ntsync client"
           check programs/explorer/material.c 'm3_apply_file_manager' "Material 3 desktop"
 
@@ -279,7 +286,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "Built from \`${{ github.sha }}\`: GameNative/proton-wine \`${BASE_SHA:0:9}\` + GE-Proton11-7 \`${GE_REF:0:7}\` (\`gamenative-ntsync/ge-proton11-7\`) + \`gamenative-ntsync/gn11.0-2\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+            echo "Built from \`${{ github.sha }}\`: GameNative/proton-wine \`${BASE_SHA:0:9}\` + GE-Proton11-7 \`${GE_REF:0:7}\` (\`gamenative-ntsync/ge-proton11-7\`) + \`gamenative-ntsync/gn11.0-2\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\` + \`gamenative-ntsync/ntsync-android\`."
           } >> release-body.md
 
       - name: Create Release
@@ -316,6 +323,6 @@ jobs:
             echo
             echo "---"
             echo
-            echo "Built from \`$sha\`: GameNative/proton-wine \`${BASE_SHA:0:9}\` + GE-Proton11-7 \`${GE_REF:0:7}\` (\`gamenative-ntsync/ge-proton11-7\`) + \`gamenative-ntsync/gn11.0-2\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\`."
+            echo "Built from \`$sha\`: GameNative/proton-wine \`${BASE_SHA:0:9}\` + GE-Proton11-7 \`${GE_REF:0:7}\` (\`gamenative-ntsync/ge-proton11-7\`) + \`gamenative-ntsync/gn11.0-2\`, ntsync-android \`${NTSYNC_ANDROID_REF:0:7}\` + \`gamenative-ntsync/ntsync-android\`."
           } >> release-body.md
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-body.md
