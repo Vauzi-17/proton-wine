@@ -18,6 +18,10 @@ on:
       - 'ge-ntsync/**'
       - '.github/workflows/build-ge11-ntsync.yml'
       - '.github/release-notes/ge-11.0-5-*'
+      # and GameNative Proton 11.0-2 with GE-Proton11-7 and Material 3
+      - 'gamenative-ntsync/**'
+      - '.github/workflows/build-gn11-ntsync.yml'
+      - '.github/release-notes/gn-11.0-2-*'
   workflow_dispatch:
 
 env:

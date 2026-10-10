@@ -1,0 +1,171 @@
+From f0c2bb973c2c8fafcb10ae15199d74828808999b Mon Sep 17 00:00:00 2001
+From: Vauzi-17 <189964753+Vauzi-17@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 04:20:31 +0000
+Subject: [PATCH 02/21] android: Rebase the ntdll loader patches onto the
+ GE-Proton hotfixes.
+
+GE-Proton11-7's ntdll-remove-redundant-packed-split-lock and
+ntdll-prefer-native-version-resource-heuristics change the lines next to
+two hunks of the Android patches, so git apply refused
+arm64ec/ and x86_64/dlls_ntdll_unix_loader_c.patch and
+common/dlls_ntdll_unix_unix_private_h.patch. They are regenerated with a
+three-way merge; the lines they add and remove are unchanged.
+
+The build scripts ignored a failed git apply and built on without the
+patch. A patch that does not apply now stops the build.
+---
+ android/patches/arm64ec/dlls_ntdll_unix_loader_c.patch | 10 +++++-----
+ .../common/dlls_ntdll_unix_unix_private_h.patch        | 10 +++++-----
+ android/patches/x86_64/dlls_ntdll_unix_loader_c.patch  | 10 +++++-----
+ build-scripts/build-step-arm64ec.sh                    |  5 ++---
+ build-scripts/build-step-x86_64.sh                     |  5 ++---
+ 5 files changed, 19 insertions(+), 21 deletions(-)
+
+diff --git a/android/patches/arm64ec/dlls_ntdll_unix_loader_c.patch b/android/patches/arm64ec/dlls_ntdll_unix_loader_c.patch
+index 0859803ccfb..c4a68dcd563 100644
+--- a/android/patches/arm64ec/dlls_ntdll_unix_loader_c.patch
++++ b/android/patches/arm64ec/dlls_ntdll_unix_loader_c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+-index f8aa468..291bf9b 100644
++index 522cb586386825ac8da4ad4e15327dd1229750ee..88de824f4714e18ac35c5331fb4971513b9de36e 100644
+ --- a/dlls/ntdll/unix/loader.c
+ +++ b/dlls/ntdll/unix/loader.c
+ @@ -340,7 +340,11 @@ static const char *get_pe_dir( WORD machine )
+@@ -54,7 +54,7 @@ index f8aa468..291bf9b 100644
+      for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
+      dll_paths[count] = NULL;
+  }
+-@@ -1785,6 +1807,81 @@ NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *n
++@@ -1786,6 +1808,81 @@ NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *n
+  }
+  
+  
+@@ -136,7 +136,7 @@ index f8aa468..291bf9b 100644
+  /***************************************************************************
+   *	get_machine_wow64_dir
+   *
+-@@ -2451,7 +2548,9 @@ static void start_main_thread(void)
++@@ -2553,7 +2650,9 @@ static void start_main_thread(void)
+      set_thread_teb( teb );
+  #endif
+  
+@@ -144,9 +144,9 @@ index f8aa468..291bf9b 100644
+      mallopt( M_PERTURB, 0xff );
+ +#endif
+      init_startup_info();
++     patch_redundant_packed_split_lock();
+      *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+-     set_load_order_app_name( main_wargv[0] );
+-@@ -2460,7 +2559,9 @@ static void start_main_thread(void)
++@@ -2563,7 +2662,9 @@ static void start_main_thread(void)
+      load_ntdll();
+      load_wow64_ntdll( main_image_info.Machine );
+      load_apiset_dll();
+diff --git a/android/patches/common/dlls_ntdll_unix_unix_private_h.patch b/android/patches/common/dlls_ntdll_unix_unix_private_h.patch
+index c1ef87bac0e..64d6653110d 100644
+--- a/android/patches/common/dlls_ntdll_unix_unix_private_h.patch
++++ b/android/patches/common/dlls_ntdll_unix_unix_private_h.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+-index 2f649ca399e..830499d63d3 100644
++index 27269a0727fa2eede3e9c1e5c0bfbb61caf9138f..7557b94847e351841985e29ccd0b64a24f078b06 100644
+ --- a/dlls/ntdll/unix/unix_private.h
+ +++ b/dlls/ntdll/unix/unix_private.h
+ @@ -203,6 +203,10 @@ extern BOOL terminate_process_running;
+@@ -13,15 +13,15 @@ index 2f649ca399e..830499d63d3 100644
+  extern timeout_t server_start_time;
+  extern sigset_t server_block_set;
+  extern pthread_mutex_t fd_cache_mutex;
+-@@ -232,6 +236,7 @@ extern NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_imag
+- extern NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *nt_name,
+-                               ANSI_STRING *exp_name, USHORT machine, SECTION_IMAGE_INFORMATION *info,
++@@ -233,6 +237,7 @@ extern NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_ST
++                               ANSI_STRING *exp_name, void *version_res, ULONG version_len,
++                               USHORT machine, SECTION_IMAGE_INFORMATION *info,
+                                void **module, SIZE_T *size, ULONG_PTR limit_low, ULONG_PTR limit_high, off_t offset );
+ +extern NTSTATUS load_unixlib_by_name( const UNICODE_STRING *nt_name, void **handle_ret );
+  extern BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine );
+  extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **module );
+  extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module );
+-@@ -724,4 +729,6 @@ static inline int is_gdt_sel( WORD sel )
++@@ -727,4 +732,6 @@ static inline int is_gdt_sel( WORD sel )
+  
+  #endif  /* defined(__i386__) || defined(__x86_64__) */
+  
+diff --git a/android/patches/x86_64/dlls_ntdll_unix_loader_c.patch b/android/patches/x86_64/dlls_ntdll_unix_loader_c.patch
+index caf224fc774..48f884ce5ca 100644
+--- a/android/patches/x86_64/dlls_ntdll_unix_loader_c.patch
++++ b/android/patches/x86_64/dlls_ntdll_unix_loader_c.patch
+@@ -1,5 +1,5 @@
+ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+-index f8aa468..520d5e2 100644
++index 522cb586386825ac8da4ad4e15327dd1229750ee..6de1cd7d4c45db3691ed35acbafe557df8f060c1 100644
+ --- a/dlls/ntdll/unix/loader.c
+ +++ b/dlls/ntdll/unix/loader.c
+ @@ -362,6 +362,7 @@ static WORD get_alt_machine( WORD machine )
+@@ -41,7 +41,7 @@ index f8aa468..520d5e2 100644
+      for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
+      dll_paths[count] = NULL;
+  }
+-@@ -1785,6 +1803,81 @@ NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *n
++@@ -1786,6 +1804,81 @@ NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *n
+  }
+  
+  
+@@ -123,7 +123,7 @@ index f8aa468..520d5e2 100644
+  /***************************************************************************
+   *	get_machine_wow64_dir
+   *
+-@@ -2451,7 +2544,9 @@ static void start_main_thread(void)
++@@ -2553,7 +2646,9 @@ static void start_main_thread(void)
+      set_thread_teb( teb );
+  #endif
+  
+@@ -131,9 +131,9 @@ index f8aa468..520d5e2 100644
+      mallopt( M_PERTURB, 0xff );
+ +#endif
+      init_startup_info();
++     patch_redundant_packed_split_lock();
+      *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+-     set_load_order_app_name( main_wargv[0] );
+-@@ -2460,7 +2555,9 @@ static void start_main_thread(void)
++@@ -2563,7 +2658,9 @@ static void start_main_thread(void)
+      load_ntdll();
+      load_wow64_ntdll( main_image_info.Machine );
+      load_apiset_dll();
+diff --git a/build-scripts/build-step-arm64ec.sh b/build-scripts/build-step-arm64ec.sh
+index 7a693daabe7..b263899b490 100755
+--- a/build-scripts/build-step-arm64ec.sh
++++ b/build-scripts/build-step-arm64ec.sh
+@@ -289,9 +289,8 @@ do
+     )
+ 
+     for patch in "${PATCHES[@]}"; do
+-#      if git apply --check ./android/patches/$patch 2>/dev/null; then
+-        git apply ./android/patches/$patch
+-#      fi
++      # a patch that stops applying fails the build instead of shipping without it
++      git apply ./android/patches/$patch || { echo "FATAL: android/patches/$patch does not apply"; exit 1; }
+     done
+   fi
+ 
+diff --git a/build-scripts/build-step-x86_64.sh b/build-scripts/build-step-x86_64.sh
+index 6e4fc378b98..1a88b7b49d3 100755
+--- a/build-scripts/build-step-x86_64.sh
++++ b/build-scripts/build-step-x86_64.sh
+@@ -274,9 +274,8 @@ do
+     )
+ 
+     for patch in "${PATCHES[@]}"; do
+-#      if git apply --check ./android/patches/$patch 2>/dev/null; then
+-        git apply ./android/patches/$patch
+-#      fi
++      # a patch that stops applying fails the build instead of shipping without it
++      git apply ./android/patches/$patch || { echo "FATAL: android/patches/$patch does not apply"; exit 1; }
+     done
+   fi
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,71 @@
+# GE-Proton11-7 (GloriousEggroll/proton-ge-custom c191f35) Wine patches, in the
+# order of patches/protonprep-valve-staging.sh. The files are GE's, unchanged.
+# The workflow applies them with patch -Np1, as GE does, and stops on any failure.
+#
+# Not carried (see ../README.md): wine-staging and the Wine-Wayland stack,
+# layered-overlay-wine, nascar25-protector, ws2_32-validate-connect-address,
+# the three win32u swapchain/present-mode hotfixes, wineopenxr, the FSR
+# fullscreen hack, nv_low_latency, ge-video-rework and proton-ds5-haptic.
+
+# game fixes
+game-patches/assettocorsa-hud.patch
+game-patches/pso2_hack.patch
+game-patches/vgsoh.patch
+game-patches/silence-starcitizen-unsupported-os.patch
+game-patches/eac_60101_timeout.patch
+game-patches/0001-win32u-Avoid-zero-WM_ACTIVATEAPP-lparam-on-first-for.patch
+game-patches/black-desert-keep-fullscreen-on-focus-loss.patch
+game-patches/maplestory-kernelbase-charprev-null.patch
+game-patches/maplestory-spi-stickykeys-filterkeys.patch
+game-patches/ai-limit-dx12-compute-shader-fallback.patch
+game-patches/max-payne-cpu-detection.patch
+game-patches/return-to-krondor-text-bitmap-readback.patch
+
+# hotfixes and backports
+wine-hotfixes/qcap-dshow-fixes/0001-qcap-fix-Smart-Tee-preview-allocator-and-RGB32-negot.patch
+wine-hotfixes/qcap-dshow-fixes/0002-qcap-fix-wow64-media-type-marshaling-in-v4l-backend.patch
+wine-hotfixes/pending/urlmon-pump-thread-user-messages-during-synchronous-bind.patch
+wine-hotfixes/pending/wineboot-create-sqm-machine-id.patch
+wine-hotfixes/pending/crypt32-pfx-record-machine-keyset-in-prov-info.patch
+wine-hotfixes/pending/crypt32-pfx-use-the-container-key-spec.patch
+wine-hotfixes/pending/crypt32-reject-ncrypt-only-private-keys.patch
+wine-hotfixes/pending/crypt32-wc3-modern-chain-engine-config.patch
+wine-hotfixes/pending/crypt32-wc3-trace-chain-engine-config.patch
+wine-hotfixes/pending/crypt32-wc3-check-exclusive-flags-size.patch
+wine-hotfixes/pending/crypt32-wc3-accept-legacy-chain-engine-config.patch
+wine-hotfixes/pending/crypt32-wc3-preserve-exclusive-root-and-test-layouts.patch
+wine-hotfixes/pending/version-GetFileVersionInfoByHandle-stub.patch
+wine-hotfixes/pending/kernel32-refresh-power-status-asynchronously.patch
+wine-hotfixes/pending/secur32-fallback-without-no-shuffle-extensions.patch
+wine-hotfixes/pending/wined3d-preserve-runtime-opengl-gpu-description.patch
+wine-hotfixes/pending/winex11-use-x11-drawables-for-steam-opengl-overlay.patch
+wine-hotfixes/pending/winex11-keep-forza-background-windows-unmapped-on-wlroots.patch
+wine-hotfixes/pending/win32u-share-selected-cursors-across-processes.patch
+wine-hotfixes/pending/ntdll-retry-native-view-allocation-with-effective-range.patch
+wine-hotfixes/pending/ntdll-reserve-top-down-space-for-large-address-aware-wow64.patch
+wine-hotfixes/pending/ntdll-remove-redundant-packed-split-lock.patch
+wine-hotfixes/pending/ntdll-prefer-native-version-resource-heuristics.patch
+wine-hotfixes/pending/ntdll-keep-builtin-amd-ags-ahead-of-version-heuristic.patch
+
+# pending upstream
+wine-hotfixes/pending/ole32-clipboard-stale-handle-1-tests.patch
+wine-hotfixes/pending/ole32-clipboard-stale-handle-2-fix.patch
+wine-hotfixes/pending/unity_crash_hotfix.patch
+wine-hotfixes/pending/registry_RRF_RT_REG_SZ-RRF_RT_REG_EXPAND_SZ.patch
+wine-hotfixes/pending/NCryptDecrypt_implementation.patch
+wine-hotfixes/pending/0009-HACK-kernel32-Spoof-GetProcAddress-of-KiUserApcDispa.patch
+wine-hotfixes/pending/icuuc-icuin-forwarder-dlls.patch
+wine-hotfixes/pending/0001-server-Dynamically-relocate-.exes-by-default-too.patch
+wine-hotfixes/pending/0002-ntdll-allow-disabling-executable-ASLR.patch
+
+# Proton-GE additions
+proton/winealsa-override-channel-count.patch
+proton/0001-win32u-Implement-NtGdiDdDDIQueryAdapterInfo-cases.patch
+proton/build_failure_prevention-add-nls.patch
+proton/0001-win32u-add-env-switch-to-disable-wm-decorations.patch
+proton/wine_host_block_envvar.patch
+proton/winex11-mutter-cinnamon.patch
+proton/0001-HACK-kernelbase-allow-overriding-dlls-for-DLSS-XeSS-.patch
+proton/0002-HACK-ntdll-add-optiscaler-inection-hack.patch
+proton/0001-ntdll-Read-QueryPerformanceCounter-from-the-TSC-in-us.patch
+proton/0001-ntdll-Implement-IOCTL_SERIAL_GET_DTRRTS-for-serial-dev.patch

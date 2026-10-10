@@ -1,0 +1,124 @@
+From de31b0fa122738528cffe2d1dbbbf07bed8bfdde Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Tue, 6 Oct 2026 14:41:24 +0200
+Subject: [PATCH 01/21] ntdll: Ignore attempts to set reserved CPSR bits.
+
+Preserve host-managed CPSR bits in signal handlers to prevent unintentional
+modifications when host platforms allow more user space changes than Windows,
+like the SSBS bit on Linux.
+
+Wine-Bug: https://bugs.winehq.org/show_bug.cgi?id=60405
+
+(cherry picked from wine commit 7fb24b7056e8b0297dcd1705f9200bed0edf9ea7,
+https://gitlab.winehq.org/wine/wine/-/merge_requests/12262)
+
+Backport notes: this tree's signal_arm64.c predates save_syscall_entry_frame()
+and the thread_data argument of restore_context(), so the restore_context(),
+NtSetContextThread() and usr2_handler() hunks are applied by hand and the
+save_syscall_entry_frame() one has nothing to change. The test is left out:
+this tree's arm64 test_thread_context() has no remote-thread part to put it in.
+---
+ dlls/ntdll/unix/signal_arm64.c | 15 ++++++++++-----
+ dlls/ntdll/unix/thread.c       |  4 ++--
+ dlls/ntdll/unix/unix_private.h |  2 ++
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index c18e6507f6c..b1b3123bccc 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -214,6 +214,11 @@ struct syscall_frame
+ C_ASSERT( sizeof( struct syscall_frame ) == 0x330 );
+ 
+ 
++/* Preserve all CPSR bits not covered by user context in signal handlers.
++ * Additionally, preserve the host SSBS bit, which is allowed to be set on
++ * Windows, but is volatile and restored on kernel transition anyway. */
++static const ULONG cpsr_host_mask = ~cpsr_user_mask | 0x1000;
++
+ /***********************************************************************
+  *           context_init_empty_xstate
+  *
+@@ -313,7 +318,7 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
+     context->Lr   = LR_sig(sigcontext);     /* Link register */
+     context->Sp   = SP_sig(sigcontext);     /* Stack pointer */
+     context->Pc   = PC_sig(sigcontext);     /* Program Counter */
+-    context->Cpsr = PSTATE_sig(sigcontext); /* Current State Register */
++    context->Cpsr = PSTATE_sig(sigcontext) & cpsr_user_mask; /* Current State Register */
+     for (i = 0; i <= 28; i++) context->X[i] = REGn_sig( i, sigcontext );
+     save_fpu( context, sigcontext );
+ }
+@@ -332,7 +337,7 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
+     LR_sig(sigcontext)     = context->Lr;   /* Link register */
+     SP_sig(sigcontext)     = context->Sp;   /* Stack pointer */
+     PC_sig(sigcontext)     = context->Pc;   /* Program Counter */
+-    PSTATE_sig(sigcontext) = context->Cpsr; /* Current State Register */
++    PSTATE_sig(sigcontext) = (PSTATE_sig(sigcontext) & cpsr_host_mask) | (context->Cpsr & ~cpsr_host_mask);
+     for (i = 0; i <= 28; i++) REGn_sig( i, sigcontext ) = context->X[i];
+     restore_fpu( context, sigcontext );
+ }
+@@ -425,7 +430,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
+         frame->lr    = context->Lr;
+         frame->sp    = context->Sp;
+         frame->pc    = context->Pc;
+-        frame->cpsr  = context->Cpsr;
++        frame->cpsr  = context->Cpsr & cpsr_user_mask;
+     }
+     if (flags & CONTEXT_FLOATING_POINT)
+     {
+@@ -594,7 +599,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
+             wow_frame->Sp = context->Sp;
+             wow_frame->Lr = context->Lr;
+             wow_frame->Pc = context->Pc & ~1;
+-            wow_frame->Cpsr = context->Cpsr;
++            wow_frame->Cpsr = context->Cpsr & cpsr_user_mask;
+             if (context->Cpsr & 0x20) wow_frame->Pc |= 1; /* thumb */
+         }
+         if (flags & CONTEXT_FLOATING_POINT)
+@@ -1385,7 +1390,7 @@ static void usr2_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+     LR_sig(context)     = frame->lr;
+     SP_sig(context)     = frame->sp;
+     PC_sig(context)     = frame->pc;
+-    PSTATE_sig(context) = frame->cpsr;
++    PSTATE_sig(context) = (PSTATE_sig(context) & cpsr_host_mask) | frame->cpsr;
+     for (i = 0; i <= 28; i++) REGn_sig( i, context ) = frame->x[i];
+ 
+ #ifdef linux
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+index b526ab30854..da1adf5a507 100644
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -544,7 +544,7 @@ static NTSTATUS context_to_server( struct context_data *to, USHORT to_machine, c
+             to->ctl.arm_regs.sp   = from->Sp;
+             to->ctl.arm_regs.lr   = from->Lr;
+             to->ctl.arm_regs.pc   = from->Pc;
+-            to->ctl.arm_regs.cpsr = from->Cpsr;
++            to->ctl.arm_regs.cpsr = from->Cpsr & cpsr_user_mask;
+         }
+         if (flags & CONTEXT_ARM_INTEGER)
+         {
+@@ -593,7 +593,7 @@ static NTSTATUS context_to_server( struct context_data *to, USHORT to_machine, c
+             to->integer.arm64_regs.x[30] = from->Lr;
+             to->ctl.arm64_regs.sp     = from->Sp;
+             to->ctl.arm64_regs.pc     = from->Pc;
+-            to->ctl.arm64_regs.pstate = from->Cpsr;
++            to->ctl.arm64_regs.pstate = from->Cpsr & cpsr_user_mask;
+         }
+         if (flags & CONTEXT_ARM64_INTEGER)
+         {
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 7d470da6a96..27269a0727f 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -628,6 +628,8 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
+                                0, NULL, size, ViewShare, 0, protect );
+ }
+ 
++static const ULONG cpsr_user_mask = 0xf620fc30;
++
+ /* LDT definitions */
+ 
+ #if defined(__i386__) || defined(__x86_64__)
+-- 
+2.43.0
+
